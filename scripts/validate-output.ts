@@ -220,19 +220,24 @@ function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, sup
   for (const [supplierIndex, expectedTotal] of supplierTotals.entries()) {
     const supplierName = supplierNames[supplierIndex];
     const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
-    const purchaseCell = outputSheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
+    const purchaseCells = [
+      outputSheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn),
+      outputSheet.getCell(TEMPLATE_MAP.rows.total, block.totalColumn)
+    ];
 
-    if (hasFormula(purchaseCell)) {
-      fail(`TOTAL COMPRA no debe depender de fórmula sin valor visible para proveedor ${supplierName}.`);
-    }
+    for (const purchaseCell of purchaseCells) {
+      if (hasFormula(purchaseCell)) {
+        fail(`TOTAL COMPRA no debe depender de fórmula sin valor visible para proveedor ${supplierName}.`);
+      }
 
-    const purchaseTotal = numericCellValue(purchaseCell);
-    if (purchaseTotal === undefined) {
-      fail(`TOTAL COMPRA vacío para proveedor ${supplierName}.`);
-    }
+      const purchaseTotal = numericCellValue(purchaseCell);
+      if (purchaseTotal === undefined) {
+        fail(`TOTAL COMPRA vacío para proveedor ${supplierName}.`);
+      }
 
-    if (Math.abs(purchaseTotal - expectedTotal) > tolerance) {
-      fail(`TOTAL COMPRA incorrecto para proveedor ${supplierName}: debe sumar los TOTAL por producto.`);
+      if (Math.abs(purchaseTotal - expectedTotal) > tolerance) {
+        fail(`TOTAL COMPRA incorrecto para proveedor ${supplierName}: debe sumar los TOTAL por producto.`);
+      }
     }
   }
 }

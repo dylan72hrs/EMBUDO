@@ -149,6 +149,11 @@ function offerCurrency(offers: Array<SupplierOffer | undefined>): Currency {
   return offers.find((offer) => offer && offer.currency !== "UNKNOWN")?.currency ?? "CLP";
 }
 
+function resolvedOfferForRow(offer: SupplierOffer | undefined, quantity: number): SupplierOffer | undefined {
+  if (!offer) return undefined;
+  return normalizeOfferForQuantity(offer, quantity);
+}
+
 function writePurchaseTotals(
   worksheet: ExcelJS.Worksheet,
   items: ComparisonItem[],
@@ -160,9 +165,14 @@ function writePurchaseTotals(
     const total = offers.reduce((sum, offer) => sum + (validPositive(offer?.total) ? offer.total : 0), 0);
     if (total <= 0) continue;
 
-    const totalCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
-    writeDynamicCell(totalCell, total);
-    applyCurrencyFormat(totalCell, offerCurrency(offers));
+    const unitSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
+    const totalSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.totalColumn);
+    const currency = offerCurrency(offers);
+
+    writeDynamicCell(unitSideCell, total);
+    writeDynamicCell(totalSideCell, total);
+    applyCurrencyFormat(unitSideCell, currency);
+    applyCurrencyFormat(totalSideCell, currency);
   }
 }
 
@@ -229,7 +239,7 @@ export async function generateComparisonExcel(
     worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.unit).value = item.unit || "CU";
 
     for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
-      const offer = item.offers[supplier.name];
+      const offer = resolvedOfferForRow(item.offers[supplier.name], item.quantity);
       const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
       const unitPriceCell = worksheet.getCell(rowNumber, block.unitPriceColumn);
       const totalCell = worksheet.getCell(rowNumber, block.totalColumn);
