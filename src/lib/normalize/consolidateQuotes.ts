@@ -132,6 +132,9 @@ export async function consolidateQuotes(
 ): Promise<ConsolidatedComparison> {
   const scope = buildComparisonScope(quotes);
   const warnings = [...scope.warnings, ...quotes.flatMap((quote) => quote.warnings)];
+  if (quotes.length === 1) {
+    warnings.push("Solo se procesó una cotización válida; se generó tabla sin comparación entre proveedores.");
+  }
   const suppliers = createSupplierSummaries(quotes);
   const usedBySupplier = new Map<string, Set<ExtractedQuoteItem>>();
   const outputCurrency = targetCurrency();

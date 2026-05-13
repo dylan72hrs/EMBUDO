@@ -68,6 +68,18 @@ function hasCellContent(value: ExcelJS.CellValue) {
   return true;
 }
 
+function hasFormula(cell: ExcelJS.Cell) {
+  const value = cell.value;
+  return Boolean(
+    cell.formula ||
+      (value && typeof value === "object" && "formula" in value && typeof value.formula === "string")
+  );
+}
+
+function hasResidualPriceContent(cell: ExcelJS.Cell) {
+  return hasFormula(cell) || hasCellContent(cell.value);
+}
+
 function compareWorksheetFormat(template: ExcelJS.Worksheet, output: ExcelJS.Worksheet) {
   const templateMerges = comparableMerges(template).join("|");
   const outputMerges = comparableMerges(output).join("|");
@@ -117,6 +129,41 @@ function validateOptionalManualConversion(numericPriceValues: number[]) {
   const expectedValue = Math.round(sourceUsd * finalRate);
   if (!numericPriceValues.some((value) => Math.round(value) === expectedValue)) {
     fail(`No se encontro conversion manual esperada: ${sourceUsd} USD * ${finalRate} = ${expectedValue} CLP.`);
+  }
+}
+
+function validateNoResidualDynamicPrices(outputSheet: ExcelJS.Worksheet, supplierNames: string[]) {
+  for (let row = TEMPLATE_MAP.productStartRow; row <= TEMPLATE_MAP.productEndRow; row += 1) {
+    const product = cellText(outputSheet.getCell(row, TEMPLATE_MAP.columns.product).value).trim();
+
+    for (const block of TEMPLATE_MAP.supplierBlocks) {
+      const unitPriceCell = outputSheet.getCell(row, block.unitPriceColumn);
+      const totalCell = outputSheet.getCell(row, block.totalColumn);
+
+      if (!product && (hasResidualPriceContent(unitPriceCell) || hasResidualPriceContent(totalCell))) {
+        fail("Se detectaron valores residuales en filas vacías de la plantilla.");
+      }
+    }
+  }
+
+  for (const [index, block] of TEMPLATE_MAP.supplierBlocks.entries()) {
+    if (supplierNames[index]) continue;
+
+    for (let row = TEMPLATE_MAP.productStartRow; row <= TEMPLATE_MAP.productEndRow; row += 1) {
+      const unitPriceCell = outputSheet.getCell(row, block.unitPriceColumn);
+      const totalCell = outputSheet.getCell(row, block.totalColumn);
+      if (hasResidualPriceContent(unitPriceCell) || hasResidualPriceContent(totalCell)) {
+        fail("Se detectaron valores residuales en columnas de proveedor no usado.");
+      }
+    }
+
+    for (const row of [TEMPLATE_MAP.rows.total, TEMPLATE_MAP.rows.purchase]) {
+      const unitPriceCell = outputSheet.getCell(row, block.unitPriceColumn);
+      const totalCell = outputSheet.getCell(row, block.totalColumn);
+      if (hasResidualPriceContent(unitPriceCell) || hasResidualPriceContent(totalCell)) {
+        fail("Se detectaron valores residuales en columnas de proveedor no usado.");
+      }
+    }
   }
 }
 
@@ -201,6 +248,7 @@ async function main() {
     cellText(outputSheet.getCell(block.supplierNameCell).value).trim()
   );
   if (supplierNames.every((name) => !name)) fail("No hay proveedores escritos en los bloques de columnas.");
+  validateNoResidualDynamicPrices(outputSheet, supplierNames);
 
   if (expectedCurrency) {
     const numericPriceValues: number[] = [];

@@ -212,7 +212,7 @@ export async function POST(request: Request) {
     }
 
     if (parsedQuotes.length === 0) {
-      throw new Error("No se pudo procesar ninguna cotización PDF.");
+      throw new Error("No se pudo procesar ninguna cotización PDF válida.");
     }
 
     const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest);

@@ -99,6 +99,31 @@ function productRowHeight(description: string) {
   return undefined;
 }
 
+function columnLetter(column: number) {
+  let current = column;
+  let letter = "";
+
+  while (current > 0) {
+    const remainder = (current - 1) % 26;
+    letter = String.fromCharCode(65 + remainder) + letter;
+    current = Math.floor((current - 1) / 26);
+  }
+
+  return letter;
+}
+
+function writeCleanTotalFormulas(worksheet: ExcelJS.Worksheet, suppliersCount: number) {
+  for (const [index, block] of TEMPLATE_MAP.supplierBlocks.entries()) {
+    if (index >= suppliersCount) continue;
+
+    const totalColumn = columnLetter(block.totalColumn);
+    const formula = `SUM(${totalColumn}${TEMPLATE_MAP.productStartRow}:${totalColumn}${TEMPLATE_MAP.productEndRow})`;
+    const totalCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
+    cloneCellStyle(totalCell);
+    totalCell.value = { formula };
+  }
+}
+
 export async function generateComparisonExcel(
   templatePath: string,
   data: ConsolidatedComparison,
@@ -193,6 +218,7 @@ export async function generateComparisonExcel(
     }
   }
 
+  writeCleanTotalFormulas(worksheet, suppliersToWrite.length);
   highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
 
   workbook.calcProperties.fullCalcOnLoad = true;
