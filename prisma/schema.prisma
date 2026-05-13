@@ -1,0 +1,74 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model ProcessingJob {
+  id                String           @id @default(cuid())
+  status            String
+  createdAt         DateTime         @default(now())
+  updatedAt         DateTime         @updatedAt
+  templateFilename  String
+  originalFileCount Int
+  outputExcelPath   String?
+  warningsJson      String
+  uploadedQuotes    UploadedQuote[]
+  comparisonItems   ComparisonItem[]
+}
+
+model UploadedQuote {
+  id               String          @id @default(cuid())
+  jobId            String
+  originalFilename String
+  supplierName     String?
+  quoteNumber      String?
+  quoteDate        DateTime?
+  rawText          String
+  parsedJson       String?
+  status           String
+  errorMessage     String?
+  job              ProcessingJob   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  extractedItems   ExtractedItem[]
+}
+
+model ExtractedItem {
+  id                   String        @id @default(cuid())
+  quoteId              String
+  sourceItem           String?
+  description          String
+  normalizedProductKey String
+  quantity             Float
+  unit                 String
+  currency             String
+  unitPrice            Float?
+  total                Float?
+  confidence           Float
+  quote                UploadedQuote @relation(fields: [quoteId], references: [id], onDelete: Cascade)
+}
+
+model ComparisonItem {
+  id                   String          @id @default(cuid())
+  jobId                String
+  itemNumber           Int
+  productName          String
+  quantity             Float
+  unit                 String
+  matchingWarningsJson String
+  job                  ProcessingJob   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  supplierOffers       SupplierOffer[]
+}
+
+model SupplierOffer {
+  id               String         @id @default(cuid())
+  comparisonItemId String
+  supplierName     String
+  currency         String
+  unitPrice        Float?
+  total            Float?
+  confidence       Float
+  comparisonItem   ComparisonItem @relation(fields: [comparisonItemId], references: [id], onDelete: Cascade)
+}

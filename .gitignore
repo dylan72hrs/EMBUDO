@@ -1,0 +1,15 @@
+node_modules
+.next
+.env
+.env.local
+*.db
+data/*.db
+data/*.db*
+uploads/*
+output/*
+!uploads/.gitkeep
+!output/.gitkeep
+!data/.gitkeep
+!templates/.gitkeep
+.DS_Store
+tsconfig.tsbuildinfo
