@@ -76,6 +76,21 @@ function hasFormula(cell: ExcelJS.Cell) {
   );
 }
 
+function numericCellValue(cell: ExcelJS.Cell) {
+  const value = cell.value;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (
+    value &&
+    typeof value === "object" &&
+    "result" in value &&
+    typeof value.result === "number" &&
+    Number.isFinite(value.result)
+  ) {
+    return value.result;
+  }
+  return undefined;
+}
+
 function hasResidualPriceContent(cell: ExcelJS.Cell) {
   return hasFormula(cell) || hasCellContent(cell.value);
 }
@@ -167,6 +182,61 @@ function validateNoResidualDynamicPrices(outputSheet: ExcelJS.Worksheet, supplie
   }
 }
 
+function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, supplierNames: string[]) {
+  const supplierTotals = new Map<number, number>();
+  const tolerance = 2;
+
+  for (let row = TEMPLATE_MAP.productStartRow; row <= TEMPLATE_MAP.productEndRow; row += 1) {
+    const product = cellText(outputSheet.getCell(row, TEMPLATE_MAP.columns.product).value).trim();
+    if (!product) continue;
+
+    const quantity = numericCellValue(outputSheet.getCell(row, TEMPLATE_MAP.columns.quantity));
+    if (quantity === undefined || quantity <= 0) {
+      fail(`Cantidad inválida en fila ${row}; no se puede validar TOTAL.`);
+    }
+
+    for (const [supplierIndex, block] of TEMPLATE_MAP.supplierBlocks.entries()) {
+      const supplierName = supplierNames[supplierIndex];
+      if (!supplierName) continue;
+
+      const unitPrice = numericCellValue(outputSheet.getCell(row, block.unitPriceColumn));
+      const total = numericCellValue(outputSheet.getCell(row, block.totalColumn));
+
+      if (unitPrice === undefined && total === undefined) continue;
+      if (unitPrice !== undefined && total === undefined) {
+        fail(`TOTAL vacío en fila ${row} proveedor ${supplierName}.`);
+      }
+      if (unitPrice === undefined || total === undefined) continue;
+
+      const expected = unitPrice * quantity;
+      if (Math.abs(total - expected) > tolerance) {
+        fail(`TOTAL incorrecto en fila ${row} proveedor ${supplierName}: esperado P_UNIT × CANT.`);
+      }
+
+      supplierTotals.set(supplierIndex, (supplierTotals.get(supplierIndex) ?? 0) + total);
+    }
+  }
+
+  for (const [supplierIndex, expectedTotal] of supplierTotals.entries()) {
+    const supplierName = supplierNames[supplierIndex];
+    const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
+    const purchaseCell = outputSheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
+
+    if (hasFormula(purchaseCell)) {
+      fail(`TOTAL COMPRA no debe depender de fórmula sin valor visible para proveedor ${supplierName}.`);
+    }
+
+    const purchaseTotal = numericCellValue(purchaseCell);
+    if (purchaseTotal === undefined) {
+      fail(`TOTAL COMPRA vacío para proveedor ${supplierName}.`);
+    }
+
+    if (Math.abs(purchaseTotal - expectedTotal) > tolerance) {
+      fail(`TOTAL COMPRA incorrecto para proveedor ${supplierName}: debe sumar los TOTAL por producto.`);
+    }
+  }
+}
+
 async function main() {
   if (!outputPath) {
     fail(
@@ -249,6 +319,7 @@ async function main() {
   );
   if (supplierNames.every((name) => !name)) fail("No hay proveedores escritos en los bloques de columnas.");
   validateNoResidualDynamicPrices(outputSheet, supplierNames);
+  validateLineTotalsAndPurchaseTotals(outputSheet, supplierNames);
 
   if (expectedCurrency) {
     const numericPriceValues: number[] = [];

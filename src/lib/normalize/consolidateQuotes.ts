@@ -78,10 +78,43 @@ function convertPrice(value: number | null, from: Currency, to: Currency, rate: 
   return value;
 }
 
+function validPositive(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
+}
+
+function comparisonQuantity(quantity: number, itemNumber: number, warnings: string[]) {
+  if (Number.isFinite(quantity) && quantity > 0) return quantity;
+  warnings.push(`Cantidad inválida para item ${itemNumber}; se usó 1.`);
+  return 1;
+}
+
+function normalizeOfferTotals(offer: SupplierOffer, quantity: number): SupplierOffer {
+  if (validPositive(offer.unitPrice)) {
+    return {
+      ...offer,
+      total: offer.unitPrice * quantity
+    };
+  }
+
+  if (validPositive(offer.total)) {
+    return {
+      ...offer,
+      unitPrice: offer.total / quantity
+    };
+  }
+
+  return {
+    ...offer,
+    unitPrice: null,
+    total: null
+  };
+}
+
 function convertOfferToTarget(
   supplierName: string,
   item: ExtractedQuoteItem,
   target: Currency,
+  quantity: number,
   exchangeRateValue: number | undefined,
   warnings: string[]
 ): SupplierOffer {
@@ -92,13 +125,13 @@ function convertOfferToTarget(
     confidence: item.confidence
   };
 
-  if (item.currency === target) return offer;
+  if (item.currency === target) return normalizeOfferTotals(offer, quantity);
 
   if (item.currency === "UNKNOWN") {
     warnings.push(
       `${supplierName}: moneda no determinada para ${displayProductName(item.description)}; no se convierte a ${target}.`
     );
-    return offer;
+    return normalizeOfferTotals(offer, quantity);
   }
 
   if (!exchangeRateValue) {
@@ -115,15 +148,15 @@ function convertOfferToTarget(
     warnings.push(
       `${supplierName}: precios convertidos de ${item.currency} a ${target} usando tipo de cambio ${exchangeRateValue}.`
     );
-    return {
+    return normalizeOfferTotals({
       ...offer,
       currency: target,
       unitPrice: convertPrice(item.unitPrice, item.currency, target, exchangeRateValue),
       total: convertPrice(item.total, item.currency, target, exchangeRateValue)
-    };
+    }, quantity);
   }
 
-  return offer;
+  return normalizeOfferTotals(offer, quantity);
 }
 
 export async function consolidateQuotes(
@@ -153,6 +186,7 @@ export async function consolidateQuotes(
   const comparison: ComparisonItem[] = scope.baseItems.map((baseItem, index) => {
     const offers: ComparisonItem["offers"] = {};
     const matchingWarnings: string[] = [];
+    const quantity = comparisonQuantity(baseItem.quantity, index + 1, warnings);
 
     for (const quote of quotes) {
       const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
@@ -167,6 +201,7 @@ export async function consolidateQuotes(
         quote.supplierName,
         best.item,
         outputCurrency,
+        quantity,
         exchange.finalRate,
         warnings
       );
@@ -175,7 +210,7 @@ export async function consolidateQuotes(
     return {
       item: index + 1,
       product: displayProductName(baseItem.description),
-      quantity: baseItem.quantity,
+      quantity,
       unit: baseItem.unit || "CU",
       offers,
       matchingWarnings

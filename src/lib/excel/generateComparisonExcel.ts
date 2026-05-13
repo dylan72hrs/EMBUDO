@@ -4,7 +4,7 @@ import { clearTemplateDynamicFields } from "@/lib/excel/clearTemplateDynamicFiel
 import { highlightBestPrices } from "@/lib/excel/highlightBestPrices";
 import { TEMPLATE_MAP } from "@/lib/excel/templateMap";
 import { outputExcelPath } from "@/lib/utils/fileStorage";
-import type { ConsolidatedComparison, Currency } from "@/lib/validations/quoteSchemas";
+import type { ComparisonItem, ConsolidatedComparison, Currency, SupplierOffer } from "@/lib/validations/quoteSchemas";
 
 type GenerateResult = {
   outputPath: string;
@@ -99,28 +99,70 @@ function productRowHeight(description: string) {
   return undefined;
 }
 
-function columnLetter(column: number) {
-  let current = column;
-  let letter = "";
-
-  while (current > 0) {
-    const remainder = (current - 1) % 26;
-    letter = String.fromCharCode(65 + remainder) + letter;
-    current = Math.floor((current - 1) / 26);
-  }
-
-  return letter;
+function validPositive(value: number | null | undefined): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
-function writeCleanTotalFormulas(worksheet: ExcelJS.Worksheet, suppliersCount: number) {
-  for (const [index, block] of TEMPLATE_MAP.supplierBlocks.entries()) {
-    if (index >= suppliersCount) continue;
+function normalizedQuantity(quantity: number) {
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+}
 
-    const totalColumn = columnLetter(block.totalColumn);
-    const formula = `SUM(${totalColumn}${TEMPLATE_MAP.productStartRow}:${totalColumn}${TEMPLATE_MAP.productEndRow})`;
+function normalizeOfferForQuantity(offer: SupplierOffer, quantity: number): SupplierOffer {
+  if (validPositive(offer.unitPrice)) {
+    return {
+      ...offer,
+      total: offer.unitPrice * quantity
+    };
+  }
+
+  if (validPositive(offer.total)) {
+    return {
+      ...offer,
+      unitPrice: offer.total / quantity
+    };
+  }
+
+  return {
+    ...offer,
+    unitPrice: null,
+    total: null
+  };
+}
+
+function normalizeComparisonItems(items: ComparisonItem[]) {
+  return items.map((item) => {
+    const quantity = normalizedQuantity(item.quantity);
+    return {
+      ...item,
+      quantity,
+      offers: Object.fromEntries(
+        Object.entries(item.offers).map(([supplierName, offer]) => [
+          supplierName,
+          normalizeOfferForQuantity(offer, quantity)
+        ])
+      )
+    };
+  });
+}
+
+function offerCurrency(offers: Array<SupplierOffer | undefined>): Currency {
+  return offers.find((offer) => offer && offer.currency !== "UNKNOWN")?.currency ?? "CLP";
+}
+
+function writePurchaseTotals(
+  worksheet: ExcelJS.Worksheet,
+  items: ComparisonItem[],
+  suppliers: ConsolidatedComparison["suppliers"]
+) {
+  for (const [supplierIndex, supplier] of suppliers.entries()) {
+    const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
+    const offers = items.map((item) => item.offers[supplier.name]);
+    const total = offers.reduce((sum, offer) => sum + (validPositive(offer?.total) ? offer.total : 0), 0);
+    if (total <= 0) continue;
+
     const totalCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
-    cloneCellStyle(totalCell);
-    totalCell.value = { formula };
+    writeDynamicCell(totalCell, total);
+    applyCurrencyFormat(totalCell, offerCurrency(offers));
   }
 }
 
@@ -140,7 +182,7 @@ export async function generateComparisonExcel(
   const warnings: string[] = [...data.warnings];
   const maxItems = TEMPLATE_MAP.productEndRow - TEMPLATE_MAP.productStartRow + 1;
   const maxSuppliers = TEMPLATE_MAP.supplierBlocks.length;
-  const itemsToWrite = data.comparison.slice(0, maxItems);
+  const itemsToWrite = normalizeComparisonItems(data.comparison.slice(0, maxItems));
   const suppliersToWrite = data.suppliers.slice(0, maxSuppliers);
 
   if (data.comparison.length > maxItems) {
@@ -218,7 +260,7 @@ export async function generateComparisonExcel(
     }
   }
 
-  writeCleanTotalFormulas(worksheet, suppliersToWrite.length);
+  writePurchaseTotals(worksheet, itemsToWrite, suppliersToWrite);
   highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
 
   workbook.calcProperties.fullCalcOnLoad = true;
