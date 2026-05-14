@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>EMBUDO Design Preview</title>
+    <style>
+      :root {
+        --bg-0: #040612;
+        --bg-1: #0b1330;
+        --bg-2: #130f35;
+        --cyan: #45e3ff;
+        --violet: #8e74ff;
+        --blue: #4d7bff;
+        --text: #eef4ff;
+        --muted: #b6c1de;
+        --glass: rgba(225, 236, 255, 0.1);
+        --glass-border: rgba(176, 201, 255, 0.35);
+        --card-dark: rgba(8, 15, 40, 0.52);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        font-family: "Segoe UI Variable", "Trebuchet MS", "Franklin Gothic Medium", sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at 10% -5%, #1d2f73 0%, transparent 38%),
+          radial-gradient(circle at 90% 5%, #321f7a 0%, transparent 42%),
+          linear-gradient(150deg, var(--bg-0), var(--bg-1) 48%, var(--bg-2));
+        overflow-x: hidden;
+      }
+
+      .mesh {
+        position: fixed;
+        inset: -15%;
+        pointer-events: none;
+        z-index: 0;
+      }
+
+      .mesh::before,
+      .mesh::after {
+        content: "";
+        position: absolute;
+        width: 62vw;
+        height: 62vw;
+        border-radius: 38% 62% 62% 38% / 44% 42% 58% 56%;
+        filter: blur(22px);
+        opacity: 0.32;
+        animation: drift 20s ease-in-out infinite alternate;
+      }
+
+      .mesh::before {
+        left: -8vw;
+        top: 10vh;
+        background: conic-gradient(from 30deg, #38bdf8, #6d8aff, #8b5cf6, #38bdf8);
+      }
+
+      .mesh::after {
+        right: -6vw;
+        bottom: -2vh;
+        animation-duration: 24s;
+        animation-delay: -5s;
+        background: conic-gradient(from 180deg, #4f46e5, #06b6d4, #7c3aed, #4f46e5);
+      }
+
+      .waves {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        z-index: 0;
+        background: repeating-radial-gradient(
+          circle at 50% 120%,
+          rgba(90, 131, 255, 0.14) 0,
+          rgba(90, 131, 255, 0.14) 1px,
+          transparent 11px,
+          transparent 32px
+        );
+        mask-image: linear-gradient(to top, rgba(0, 0, 0, 0.95), rgba(0, 0, 0, 0.08));
+        animation: pulse 16s linear infinite;
+      }
+
+      @keyframes drift {
+        0% {
+          transform: translate3d(0, 0, 0) rotate(0deg);
+        }
+        100% {
+          transform: translate3d(3vw, -2vh, 0) rotate(18deg);
+        }
+      }
+
+      @keyframes pulse {
+        0% {
+          transform: translateY(0);
+        }
+        100% {
+          transform: translateY(-40px);
+        }
+      }
+
+      .page {
+        position: relative;
+        z-index: 1;
+        min-height: 100%;
+        padding: 30px 24px;
+        display: grid;
+        place-items: center;
+      }
+
+      .shell {
+        width: min(1150px, 100%);
+        border: 1px solid var(--glass-border);
+        border-radius: 28px;
+        backdrop-filter: blur(16px);
+        background: linear-gradient(140deg, rgba(228, 239, 255, 0.12), rgba(180, 206, 255, 0.06));
+        box-shadow: 0 28px 70px rgba(0, 0, 0, 0.52), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+        overflow: hidden;
+      }
+
+      .shell-inner {
+        background: linear-gradient(160deg, rgba(10, 20, 52, 0.68), rgba(11, 10, 33, 0.76));
+        padding: 28px;
+      }
+
+      .topbar {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 20px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .logo {
+        width: 44px;
+        height: 44px;
+        border-radius: 14px;
+        background: linear-gradient(145deg, #3ac5ff, #7368ff);
+        display: grid;
+        place-items: center;
+        box-shadow: 0 10px 28px rgba(78, 118, 255, 0.4);
+      }
+
+      .logo::before {
+        content: "";
+        width: 22px;
+        height: 22px;
+        border: 2px solid #eff8ff;
+        border-left-color: transparent;
+        border-radius: 7px;
+        transform: rotate(45deg);
+      }
+
+      .brand h1 {
+        margin: 0;
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+
+      .brand p {
+        margin: 2px 0 0;
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .badge {
+        padding: 8px 12px;
+        border-radius: 999px;
+        font-size: 0.8rem;
+        letter-spacing: 0.03em;
+        color: #dcfef5;
+        border: 1px solid rgba(138, 255, 226, 0.5);
+        background: rgba(58, 255, 187, 0.14);
+      }
+
+      .hero {
+        margin-top: 26px;
+      }
+
+      .hero h2 {
+        margin: 0;
+        font-size: clamp(1.65rem, 3vw, 2.4rem);
+      }
+
+      .hero p {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 1rem;
+      }
+
+      .grid {
+        margin-top: 24px;
+        display: grid;
+        grid-template-columns: 1.05fr 0.95fr;
+        gap: 18px;
+      }
+
+      .panel {
+        border: 1px solid rgba(165, 190, 248, 0.3);
+        background: var(--card-dark);
+        border-radius: 18px;
+        padding: 16px;
+        box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+      }
+
+      .panel h3 {
+        margin: 0 0 12px;
+        font-size: 0.98rem;
+      }
+
+      .option-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .option {
+        border: 1px solid rgba(157, 186, 255, 0.35);
+        border-radius: 12px;
+        padding: 10px 11px;
+        background: rgba(16, 27, 62, 0.7);
+      }
+
+      .option strong {
+        display: block;
+        font-size: 0.9rem;
+      }
+
+      .option span {
+        display: block;
+        margin-top: 4px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        line-height: 1.4;
+      }
+
+      .option.active {
+        border-color: rgba(89, 241, 255, 0.68);
+        background: linear-gradient(155deg, rgba(65, 231, 255, 0.2), rgba(107, 117, 255, 0.18));
+        box-shadow: 0 0 0 1px rgba(88, 244, 255, 0.24);
+      }
+
+      .bank-card {
+        margin-top: 12px;
+        border: 1px solid rgba(145, 191, 255, 0.35);
+        background: rgba(8, 23, 58, 0.65);
+        border-radius: 14px;
+        padding: 12px;
+      }
+
+      .bank-card p {
+        margin: 2px 0;
+        color: var(--muted);
+        font-size: 0.85rem;
+      }
+
+      .bank-card .v {
+        color: #f0f6ff;
+        font-weight: 700;
+      }
+
+      .bank-card a {
+        margin-top: 6px;
+        display: inline-block;
+        color: #8ce9ff;
+        font-size: 0.82rem;
+        text-decoration: none;
+        border-bottom: 1px dashed rgba(140, 233, 255, 0.7);
+      }
+
+      .dropzone {
+        margin-top: 12px;
+        border: 1px dashed rgba(140, 186, 255, 0.45);
+        border-radius: 16px;
+        padding: 20px;
+        text-align: center;
+        background: radial-gradient(circle at 50% 0, rgba(77, 139, 255, 0.22), rgba(23, 25, 58, 0.42));
+      }
+
+      .pdf {
+        width: 58px;
+        height: 58px;
+        margin: 0 auto 10px;
+        border-radius: 15px;
+        border: 1px solid rgba(183, 214, 255, 0.4);
+        background: rgba(25, 33, 65, 0.8);
+        display: grid;
+        place-items: center;
+      }
+
+      .dropzone h4 {
+        margin: 0;
+        font-size: 1rem;
+      }
+
+      .dropzone p {
+        margin: 7px 0 0;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .btn {
+        border: 0;
+        border-radius: 11px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+
+      .btn.secondary {
+        margin-top: 12px;
+        padding: 10px 14px;
+        color: #ebf6ff;
+        background: linear-gradient(145deg, #2f53de, #16a7d3);
+      }
+
+      .files {
+        margin-top: 14px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .file {
+        border-radius: 999px;
+        padding: 7px 11px;
+        font-size: 0.78rem;
+        color: #d7e8ff;
+        background: rgba(34, 58, 112, 0.62);
+        border: 1px solid rgba(133, 171, 255, 0.38);
+      }
+
+      .primary-wrap {
+        margin-top: 18px;
+      }
+
+      .btn.primary {
+        width: 100%;
+        padding: 13px;
+        color: #f3fbff;
+        background: linear-gradient(92deg, #2f6dff, #14bddf 55%, #5c77ff);
+        box-shadow: 0 12px 30px rgba(25, 96, 255, 0.45);
+      }
+
+      .btn.primary:hover {
+        filter: brightness(1.08);
+      }
+
+      .timeline {
+        display: grid;
+        gap: 8px;
+      }
+
+      .step {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 9px;
+        border-radius: 10px;
+        border: 1px solid rgba(135, 164, 224, 0.24);
+        color: #c8d4f3;
+        font-size: 0.84rem;
+      }
+
+      .dot {
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: #7384b7;
+      }
+
+      .step.active {
+        border-color: rgba(105, 241, 255, 0.5);
+        background: rgba(52, 119, 255, 0.25);
+        color: #ebf6ff;
+      }
+
+      .step.active .dot {
+        background: var(--cyan);
+        box-shadow: 0 0 14px rgba(106, 251, 255, 0.9);
+      }
+
+      .result {
+        margin-top: 14px;
+        border-radius: 14px;
+        border: 1px solid rgba(116, 210, 255, 0.35);
+        background: rgba(8, 31, 56, 0.64);
+        padding: 14px;
+      }
+
+      .result h4 {
+        margin: 0;
+        font-size: 0.98rem;
+      }
+
+      .kv {
+        margin-top: 10px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+      }
+
+      .kv .item {
+        border-radius: 10px;
+        padding: 10px;
+        border: 1px solid rgba(149, 183, 238, 0.3);
+        background: rgba(15, 34, 68, 0.65);
+      }
+
+      .k {
+        color: var(--muted);
+        font-size: 0.75rem;
+      }
+
+      .v {
+        margin-top: 4px;
+        font-size: 0.87rem;
+      }
+
+      .btn.download {
+        margin-top: 12px;
+        width: 100%;
+        padding: 11px;
+        color: #e8f5ff;
+        background: linear-gradient(145deg, #1f9ec6, #286dff);
+      }
+
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="mesh"></div>
+    <div class="waves"></div>
+    <div class="page">
+      <div class="shell">
+        <div class="shell-inner">
+          <header class="topbar">
+            <div class="brand">
+              <div class="logo"></div>
+              <div>
+                <h1>EMBUDO</h1>
+                <p>Automatización documental para compras</p>
+              </div>
+            </div>
+            <div class="badge">Online</div>
+          </header>
+
+          <section class="hero">
+            <h2>Genera tu tabla comparativa</h2>
+            <p>
+              Sube cotizaciones PDF y obtén un Excel listo para comparar proveedores, precios y
+              condiciones.
+            </p>
+          </section>
+
+          <section class="grid">
+            <div class="panel">
+              <h3>Tipo de cambio USD</h3>
+              <div class="option-row">
+                <div class="option active">
+                  <strong>Automático</strong>
+                  <span>Usar dólar observado del día + $5</span>
+                </div>
+                <div class="option">
+                  <strong>Manual</strong>
+                  <span>Ingresar dólar manual</span>
+                </div>
+              </div>
+
+              <div class="bank-card">
+                <p>Dólar observado hoy: <span class="v">889.19</span></p>
+                <p>by: Banco Central</p>
+                <p>Tipo de cambio aplicado: <span class="v">894.19 CLP/USD</span></p>
+                <a href="#" onclick="return false;">Ver en Banco Central</a>
+              </div>
+
+              <div class="dropzone">
+                <div class="pdf">
+                  <svg width="30" height="30" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path
+                      d="M8 3.8h5.7L19 9v10.2a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1V4.8a1 1 0 0 1 1-1z"
+                      stroke="#b8d7ff"
+                      stroke-width="1.4"
+                    />
+                    <path d="M13.5 3.8V9H19" stroke="#b8d7ff" stroke-width="1.4" />
+                    <text x="8.2" y="16.5" fill="#8ce9ff" font-size="5.7" font-family="sans-serif">
+                      PDF
+                    </text>
+                  </svg>
+                </div>
+                <h4>Arrastra tus cotizaciones PDF</h4>
+                <p>Puedes subir hasta 20 archivos. Esta vista es solo maqueta visual.</p>
+                <button class="btn secondary" type="button">Añadir archivos</button>
+                <div class="files">
+                  <span class="file">cotizacion-adis.pdf</span>
+                  <span class="file">cotizacion-echave.pdf</span>
+                  <span class="file">cotizacion-tecno.pdf</span>
+                </div>
+              </div>
+
+              <div class="primary-wrap">
+                <button class="btn primary" type="button">Enviar cotizaciones</button>
+              </div>
+            </div>
+
+            <div class="panel">
+              <h3>Procesamiento simulado</h3>
+              <div class="timeline" id="timeline">
+                <div class="step active"><span class="dot"></span><span>Subiendo archivos</span></div>
+                <div class="step"><span class="dot"></span><span>Leyendo PDFs</span></div>
+                <div class="step"><span class="dot"></span><span>Detectando proveedores</span></div>
+                <div class="step"><span class="dot"></span><span>Calculando tipo de cambio</span></div>
+                <div class="step"><span class="dot"></span><span>Generando Excel</span></div>
+              </div>
+
+              <div class="result">
+                <h4>Tabla comparativa lista</h4>
+                <div class="kv">
+                  <div class="item">
+                    <div class="k">Proveedores detectados</div>
+                    <div class="v">Echave Turri, ADIS, Tecno Mercado</div>
+                  </div>
+                  <div class="item">
+                    <div class="k">Productos detectados</div>
+                    <div class="v">7</div>
+                  </div>
+                </div>
+                <button class="btn download" type="button">Descargar Excel</button>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const steps = Array.from(document.querySelectorAll("#timeline .step"));
+        let index = 0;
+        setInterval(() => {
+          steps.forEach((step, i) => step.classList.toggle("active", i <= index));
+          index = (index + 1) % steps.length;
+        }, 1400);
+      })();
+    </script>
+  </body>
+</html>

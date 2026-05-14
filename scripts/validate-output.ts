@@ -18,12 +18,12 @@ const sourceUsd = sourceUsdArg ? Number(sourceUsdArg.split("=")[1]) : 33;
 const forbiddenProductTerms: Array<{ label: string; pattern: RegExp }> = [
   { label: "Los Leones", pattern: /los leones/i },
   { label: "Casa Matriz", pattern: /casa matriz/i },
-  { label: "Fono", pattern: /(^|[^a-záéíóúñ])fono([^a-záéíóúñ]|$)/i },
-  { label: "Telefono", pattern: /\btel[eé]fono\b/i },
-  { label: "miercoles", pattern: /mi[eé]rcoles/i },
+  { label: "Fono", pattern: /(^|[^a-zÃ¡Ã©Ã­Ã³ÃºÃ±])fono([^a-zÃ¡Ã©Ã­Ã³ÃºÃ±]|$)/i },
+  { label: "Telefono", pattern: /\btel[eÃ©]fono\b/i },
+  { label: "miercoles", pattern: /mi[eÃ©]rcoles/i },
   { label: "Santiago", pattern: /\bsantiago\b/i },
   { label: "Personas naturales", pattern: /personas naturales/i },
-  { label: "Pagina", pattern: /p[áa]gina/i },
+  { label: "Pagina", pattern: /p[Ã¡a]gina/i },
   { label: "Condiciones Comerciales", pattern: /condiciones comerciales/i },
   { label: "Plazo de Entrega", pattern: /plazo de entrega/i },
   { label: "Email", pattern: /\bemail\b/i },
@@ -156,7 +156,7 @@ function validateNoResidualDynamicPrices(outputSheet: ExcelJS.Worksheet, supplie
       const totalCell = outputSheet.getCell(row, block.totalColumn);
 
       if (!product && (hasResidualPriceContent(unitPriceCell) || hasResidualPriceContent(totalCell))) {
-        fail("Se detectaron valores residuales en filas vacías de la plantilla.");
+        fail("Se detectaron valores residuales en filas vacÃ­as de la plantilla.");
       }
     }
   }
@@ -192,7 +192,7 @@ function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, sup
 
     const quantity = numericCellValue(outputSheet.getCell(row, TEMPLATE_MAP.columns.quantity));
     if (quantity === undefined || quantity <= 0) {
-      fail(`Cantidad inválida en fila ${row}; no se puede validar TOTAL.`);
+      fail(`Cantidad invÃ¡lida en fila ${row}; no se puede validar TOTAL.`);
     }
 
     for (const [supplierIndex, block] of TEMPLATE_MAP.supplierBlocks.entries()) {
@@ -204,17 +204,13 @@ function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, sup
 
       if (unitPrice === undefined && total === undefined) continue;
       if (unitPrice !== undefined && total === undefined) {
-        fail(`TOTAL vacío en fila ${row} proveedor ${supplierName}.`);
+        fail(`TOTAL vacÃ­o en fila ${row} proveedor ${supplierName}.`);
       }
       if (unitPrice === undefined || total === undefined) continue;
 
       const expected = unitPrice * quantity;
       if (Math.abs(total - expected) > tolerance) {
-        fail(`Fallo de Integridad: TOTAL no es igual a P.UNIT * CANT en fila ${row} proveedor ${supplierName}`);
-      }
-
-      if (quantity > 1 && Math.abs(total - unitPrice) <= tolerance) {
-        fail(`Fallo de Integridad: TOTAL no es igual a P.UNIT * CANT en fila ${row} proveedor ${supplierName}`);
+        fail(`TOTAL incorrecto en fila ${row} proveedor ${supplierName}: esperado P_UNIT Ã— CANT.`);
       }
 
       supplierTotals.set(supplierIndex, (supplierTotals.get(supplierIndex) ?? 0) + total);
@@ -231,12 +227,12 @@ function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, sup
 
     for (const purchaseCell of purchaseCells) {
       if (hasFormula(purchaseCell)) {
-        fail(`TOTAL COMPRA no debe depender de fórmula sin valor visible para proveedor ${supplierName}.`);
+        fail(`TOTAL COMPRA no debe depender de fÃ³rmula sin valor visible para proveedor ${supplierName}.`);
       }
 
       const purchaseTotal = numericCellValue(purchaseCell);
       if (purchaseTotal === undefined) {
-        fail(`TOTAL COMPRA vacío para proveedor ${supplierName}.`);
+        fail(`TOTAL COMPRA vacÃ­o para proveedor ${supplierName}.`);
       }
 
       if (Math.abs(purchaseTotal - expectedTotal) > tolerance) {

@@ -234,6 +234,12 @@ export async function consolidateQuotes(
   return {
     comparison,
     suppliers,
-    warnings: [...new Set(warnings)]
+    warnings: [...new Set(warnings)],
+    exchangeRate: {
+      mode: exchange.mode,
+      baseRate: exchange.baseRate,
+      margin: exchange.margin,
+      finalRate: exchange.finalRate
+    }
   };
 }

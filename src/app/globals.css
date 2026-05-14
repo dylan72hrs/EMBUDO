@@ -3,15 +3,256 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: light;
-}
-
-body {
-  margin: 0;
-  background: #f7f9fb;
-  color: #182026;
+  color-scheme: dark;
 }
 
 * {
   box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #040812;
+  color: #e9efff;
+}
+
+.embudo-video-bg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: saturate(1.15) contrast(1.04) brightness(0.52);
+}
+
+.embudo-bg-overlay {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(43, 120, 255, 0.28), transparent 40%),
+    radial-gradient(circle at 78% 12%, rgba(145, 74, 255, 0.24), transparent 46%),
+    linear-gradient(180deg, rgba(1, 4, 12, 0.5), rgba(1, 5, 16, 0.92));
+}
+
+.embudo-bg-gradient {
+  position: absolute;
+  inset: -12%;
+  background:
+    radial-gradient(circle at 18% 70%, rgba(31, 179, 255, 0.12), transparent 34%),
+    radial-gradient(circle at 84% 72%, rgba(136, 95, 255, 0.14), transparent 38%);
+  animation: embudo-drift 18s ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.embudo-glass {
+  border: 1px solid rgba(185, 214, 255, 0.24);
+  background: linear-gradient(135deg, rgba(20, 33, 65, 0.55), rgba(12, 18, 44, 0.48));
+  backdrop-filter: blur(14px);
+  box-shadow:
+    0 20px 48px rgba(2, 5, 18, 0.5),
+    inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.embudo-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-radius: 18px;
+  padding: 12px 16px;
+}
+
+.embudo-logo-mark {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #2f7cff, #46d9ff 42%, #8f6bff);
+  box-shadow: 0 10px 24px rgba(53, 104, 255, 0.4);
+}
+
+.embudo-branding-shell {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.embudo-branding-title {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: #f3f7ff;
+}
+
+.embudo-branding-subtitle {
+  margin: 4px 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  background: linear-gradient(96deg, #72e8ff, #6296ff 45%, #9f79ff 76%, #80ecff);
+  background-size: 180% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: 0 0 18px rgba(96, 198, 255, 0.28);
+  animation: embudo-shimmer 8s ease-in-out infinite alternate;
+  transition: filter 180ms ease, text-shadow 180ms ease;
+}
+
+.embudo-branding-subtitle:hover {
+  filter: brightness(1.08);
+  text-shadow: 0 0 22px rgba(122, 191, 255, 0.42);
+}
+
+.embudo-online-badge {
+  border-radius: 999px;
+  border: 1px solid rgba(89, 255, 215, 0.55);
+  background: rgba(25, 182, 132, 0.2);
+  padding: 6px 12px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #d7fff4;
+}
+
+.embudo-kicker {
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.2em;
+  color: #a4cffd;
+}
+
+.embudo-hero-title {
+  margin-top: 0.6rem;
+  font-size: clamp(2.05rem, 6vw, 4.2rem);
+  line-height: 1.06;
+  font-weight: 700;
+  color: #f6f9ff;
+}
+
+.embudo-gradient-title {
+  background: linear-gradient(96deg, #71e6ff, #6f8dff 45%, #aa7bff 72%, #7df4ff);
+  background-size: 160% 100%;
+  color: transparent;
+  -webkit-background-clip: text;
+  background-clip: text;
+  text-shadow: 0 0 28px rgba(97, 193, 255, 0.35);
+  animation: embudo-shimmer 7.8s ease-in-out infinite alternate;
+}
+
+.embudo-option {
+  border-radius: 14px;
+  border: 1px solid rgba(151, 180, 224, 0.35);
+  background: rgba(13, 21, 47, 0.52);
+  padding: 12px;
+  transition: all 180ms ease;
+}
+
+.embudo-option:hover {
+  border-color: rgba(132, 227, 255, 0.55);
+  transform: translateY(-1px);
+}
+
+.embudo-option.active {
+  border-color: rgba(83, 238, 255, 0.75);
+  background: linear-gradient(145deg, rgba(45, 129, 255, 0.3), rgba(133, 88, 255, 0.24));
+  box-shadow: inset 0 0 0 1px rgba(89, 220, 255, 0.3);
+}
+
+.embudo-primary-btn {
+  border: 0;
+  color: #ebf6ff;
+  background: linear-gradient(100deg, #2f7cff, #1ac2e6 55%, #725fff);
+  box-shadow: 0 14px 28px rgba(35, 112, 255, 0.35);
+  transition: all 180ms ease;
+}
+
+.embudo-primary-btn:hover:not(:disabled) {
+  filter: brightness(1.06);
+  transform: translateY(-1px);
+}
+
+.embudo-primary-btn:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
+  box-shadow: none;
+}
+
+.embudo-secondary-btn {
+  border: 1px solid rgba(156, 188, 237, 0.35);
+  color: #ecf4ff;
+  background: rgba(12, 24, 51, 0.56);
+  transition: all 180ms ease;
+}
+
+.embudo-secondary-btn:hover {
+  background: rgba(19, 36, 70, 0.7);
+}
+
+.embudo-progress {
+  background: linear-gradient(90deg, #67d4ff, #70a7ff, #90b4ff);
+}
+
+.embudo-analytics-panel {
+  border: 1px solid rgba(133, 193, 255, 0.24);
+  background: linear-gradient(155deg, rgba(13, 26, 58, 0.74), rgba(11, 18, 42, 0.78));
+  backdrop-filter: blur(12px);
+  box-shadow:
+    0 18px 38px rgba(3, 8, 23, 0.45),
+    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.embudo-analytics-card {
+  border-radius: 14px;
+  border: 1px solid rgba(145, 202, 255, 0.2);
+  background: linear-gradient(150deg, rgba(14, 23, 50, 0.72), rgba(8, 14, 34, 0.82));
+  padding: 14px;
+  transition: border-color 180ms ease, transform 180ms ease;
+}
+
+.embudo-analytics-card:hover {
+  border-color: rgba(141, 233, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.embudo-analytics-label {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #97a8cd;
+}
+
+.embudo-analytics-value {
+  margin-top: 8px;
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #f4f8ff;
+}
+
+.embudo-analytics-caption {
+  margin-top: 4px;
+  font-size: 0.77rem;
+  color: #95a4c6;
+}
+
+.embudo-analytics-bar {
+  background: linear-gradient(95deg, #4ad6ff, #5f9dff 50%, #8d78ff);
+  box-shadow: 0 0 18px rgba(95, 190, 255, 0.32);
+}
+
+@keyframes embudo-drift {
+  0% {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  100% {
+    transform: translate3d(1.6vw, -1.8vh, 0) scale(1.03);
+  }
+}
+
+@keyframes embudo-shimmer {
+  0% {
+    background-position: 0% 50%;
+  }
+  100% {
+    background-position: 100% 50%;
+  }
 }

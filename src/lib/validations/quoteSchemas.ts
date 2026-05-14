@@ -48,10 +48,18 @@ export const ComparisonItemSchema = z.object({
   matchingWarnings: z.array(z.string()).default([])
 });
 
+export const AppliedExchangeRateSchema = z.object({
+  mode: z.enum(["auto", "manual", "fallback", "env"]),
+  baseRate: z.number().positive(),
+  margin: z.number().positive(),
+  finalRate: z.number().positive()
+});
+
 export const ConsolidatedComparisonSchema = z.object({
   comparison: z.array(ComparisonItemSchema),
   suppliers: z.array(SupplierSummarySchema),
-  warnings: z.array(z.string()).default([])
+  warnings: z.array(z.string()).default([]),
+  exchangeRate: AppliedExchangeRateSchema.optional()
 });
 
 export type Currency = z.infer<typeof CurrencySchema>;
@@ -61,3 +69,4 @@ export type SupplierSummary = z.infer<typeof SupplierSummarySchema>;
 export type SupplierOffer = z.infer<typeof SupplierOfferSchema>;
 export type ComparisonItem = z.infer<typeof ComparisonItemSchema>;
 export type ConsolidatedComparison = z.infer<typeof ConsolidatedComparisonSchema>;
+export type AppliedExchangeRate = z.infer<typeof AppliedExchangeRateSchema>;

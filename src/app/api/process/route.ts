@@ -7,6 +7,7 @@ import { parseQuoteFromText } from "@/lib/parser/parseQuoteFromText";
 import { consolidateQuotes } from "@/lib/normalize/consolidateQuotes";
 import { generateComparisonExcel } from "@/lib/excel/generateComparisonExcel";
 import { parseExchangeRateValue, type ExchangeRateRequest } from "@/lib/currency/getExchangeRate";
+import { buildPurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
 import {
   ensureJobDirectories,
   ensureStorageLayout,
@@ -218,6 +219,7 @@ export async function POST(request: Request) {
     const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest);
     const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId);
     const allWarnings = [...new Set([...warnings, ...generated.warnings])];
+    const analytics = buildPurchaseAnalytics(consolidated, allWarnings.length);
 
     for (const item of consolidated.comparison) {
       await prisma.comparisonItem.create({
@@ -256,7 +258,8 @@ export async function POST(request: Request) {
       suppliers: consolidated.suppliers.map((supplier) => supplier.name),
       itemsDetected: consolidated.comparison.length,
       warnings: allWarnings,
-      downloadUrl: `/api/download/${activeJobId}`
+      downloadUrl: `/api/download/${activeJobId}`,
+      analytics
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error desconocido.";

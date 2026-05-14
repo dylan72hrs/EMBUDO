@@ -1,4 +1,5 @@
 import { DownloadButton } from "@/components/DownloadButton";
+import type { PurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
 
 export type ProcessResult = {
   jobId?: string;
@@ -8,6 +9,7 @@ export type ProcessResult = {
   warnings: string[];
   downloadUrl?: string;
   message?: string;
+  analytics?: PurchaseAnalytics;
 };
 
 type Props = {
