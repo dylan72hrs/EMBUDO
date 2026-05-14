@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { PdfUploader } from "@/components/PdfUploader";
 import { ProcessingSummary, type ProcessResult } from "@/components/ProcessingSummary";
 
@@ -17,6 +17,17 @@ const EXCHANGE_RATE_MARGIN_CLP = 5;
 
 type Screen = "upload" | "confirm" | "processing" | "success" | "error";
 type ExchangeRateMode = "auto" | "manual";
+type ExchangeRateInfo = {
+  status: "ok" | "error";
+  baseRate?: number;
+  margin?: number;
+  finalRate?: number;
+  mode?: "auto" | "manual" | "fallback" | "env";
+  provider?: string;
+  sourceUrl?: string;
+  message?: string;
+  warnings?: string[];
+};
 
 export default function Home() {
   const [quotes, setQuotes] = useState<File[]>([]);
@@ -26,6 +37,7 @@ export default function Home() {
   const [exchangeRateMode, setExchangeRateMode] = useState<ExchangeRateMode>("auto");
   const [manualExchangeRate, setManualExchangeRate] = useState("");
   const [exchangeRateError, setExchangeRateError] = useState("");
+  const [exchangeRateInfo, setExchangeRateInfo] = useState<ExchangeRateInfo | null>(null);
 
   const progress = useMemo(() => {
     if (screen === "success") return 100;
@@ -40,6 +52,34 @@ export default function Home() {
   }, [manualExchangeRate]);
   const manualFinalExchangeRate =
     manualExchangeRateValue === undefined ? undefined : manualExchangeRateValue + EXCHANGE_RATE_MARGIN_CLP;
+  const automaticAppliedRate = exchangeRateInfo?.finalRate;
+  const observedRate = exchangeRateInfo?.baseRate;
+  const displayedAppliedRate = exchangeRateMode === "manual" ? manualFinalExchangeRate : automaticAppliedRate;
+
+  useEffect(() => {
+    let mounted = true;
+
+    async function loadExchangeRate() {
+      try {
+        const response = await fetch("/api/exchange-rate");
+        const payload = (await response.json()) as ExchangeRateInfo;
+        if (!mounted) return;
+        setExchangeRateInfo(payload);
+      } catch {
+        if (!mounted) return;
+        setExchangeRateInfo({
+          status: "error",
+          message: "No se pudo cargar el dólar observado."
+        });
+      }
+    }
+
+    void loadExchangeRate();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
 
   function removeFile(index: number) {
     setQuotes((current) => current.filter((_, currentIndex) => currentIndex !== index));
@@ -238,6 +278,35 @@ export default function Home() {
                 )}
 
                 {exchangeRateError && <p className="mt-3 text-sm text-rose-200">{exchangeRateError}</p>}
+
+                <section className="mt-4 rounded-md border border-slate-700 bg-slate-900/60 p-3">
+                  <p className="text-xs text-slate-300">
+                    Dólar observado hoy:{" "}
+                    <span className="font-semibold text-slate-100">
+                      {observedRate !== undefined ? observedRate : "No disponible"}
+                    </span>
+                  </p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    by: {exchangeRateInfo?.provider ?? "Banco Central"}
+                  </p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    Tipo de cambio aplicado:{" "}
+                    <span className="font-semibold text-cyan-100">
+                      {displayedAppliedRate !== undefined ? `${displayedAppliedRate} CLP/USD` : "No disponible"}
+                    </span>
+                  </p>
+                  <a
+                    href={
+                      exchangeRateInfo?.sourceUrl ??
+                      "https://si3.bcentral.cl/Indicadoressiete/secure/Indicadoresdiarios.aspx"
+                    }
+                    target="_blank"
+                    rel="noreferrer"
+                    className="mt-2 inline-block text-xs font-semibold text-cyan-200 underline decoration-cyan-200/50 underline-offset-2 hover:text-cyan-100"
+                  >
+                    Ver en Banco Central
+                  </a>
+                </section>
               </section>
               <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300">
                 Sube las cotizaciones PDF. La app usará automáticamente la plantilla oficial en

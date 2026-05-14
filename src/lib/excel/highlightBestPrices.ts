@@ -28,11 +28,16 @@ function validPrice(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value > 0;
 }
 
+function resolvedQuantity(quantity: number) {
+  return Number.isFinite(quantity) && quantity > 0 ? quantity : 1;
+}
+
 function comparablePrice(item: ComparisonItem, supplierName: string) {
   const offer = item.offers[supplierName];
   if (!offer) return undefined;
+  const quantity = resolvedQuantity(item.quantity);
+  if (validPrice(offer.unitPrice)) return offer.unitPrice * quantity;
   if (validPrice(offer.total)) return offer.total;
-  if (validPrice(offer.unitPrice)) return offer.unitPrice;
   return undefined;
 }
 

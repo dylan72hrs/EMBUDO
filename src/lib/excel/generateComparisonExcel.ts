@@ -154,26 +154,29 @@ function resolvedOfferForRow(offer: SupplierOffer | undefined, quantity: number)
   return normalizeOfferForQuantity(offer, quantity);
 }
 
-function writePurchaseTotals(
-  worksheet: ExcelJS.Worksheet,
-  items: ComparisonItem[],
-  suppliers: ConsolidatedComparison["suppliers"]
-) {
-  for (const [supplierIndex, supplier] of suppliers.entries()) {
-    const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
-    const offers = items.map((item) => item.offers[supplier.name]);
-    const total = offers.reduce((sum, offer) => sum + (validPositive(offer?.total) ? offer.total : 0), 0);
-    if (total <= 0) continue;
-
-    const unitSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
-    const totalSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.totalColumn);
-    const currency = offerCurrency(offers);
-
-    writeDynamicCell(unitSideCell, total);
-    writeDynamicCell(totalSideCell, total);
-    applyCurrencyFormat(unitSideCell, currency);
-    applyCurrencyFormat(totalSideCell, currency);
+function resolveLineValues(offer: SupplierOffer | undefined, quantity: number) {
+  if (!offer) {
+    return { unitPrice: null as number | null, lineTotal: null as number | null };
   }
+
+  if (validPositive(offer.unitPrice)) {
+    return {
+      unitPrice: offer.unitPrice,
+      lineTotal: offer.unitPrice * quantity
+    };
+  }
+
+  if (validPositive(offer.total)) {
+    return {
+      unitPrice: offer.total / quantity,
+      lineTotal: offer.total
+    };
+  }
+
+  return {
+    unitPrice: null as number | null,
+    lineTotal: null as number | null
+  };
 }
 
 export async function generateComparisonExcel(
@@ -194,6 +197,7 @@ export async function generateComparisonExcel(
   const maxSuppliers = TEMPLATE_MAP.supplierBlocks.length;
   const itemsToWrite = normalizeComparisonItems(data.comparison.slice(0, maxItems));
   const suppliersToWrite = data.suppliers.slice(0, maxSuppliers);
+  const purchaseTotalsBySupplier = new Map<string, number>();
 
   if (data.comparison.length > maxItems) {
     warnings.push(
@@ -235,21 +239,33 @@ export async function generateComparisonExcel(
     cloneCellStyle(productCell);
     productCell.alignment = { ...productCell.alignment, wrapText: true, vertical: "middle" };
     row.height = productRowHeight(item.product) ?? row.height;
-    worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.quantity).value = item.quantity;
+    const quantity = normalizedQuantity(item.quantity);
+    if (quantity !== item.quantity) {
+      warnings.push(`Cantidad invalida para item ${item.item}; se uso 1.`);
+    }
+    worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.quantity).value = quantity;
     worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.unit).value = item.unit || "CU";
 
     for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
-      const offer = resolvedOfferForRow(item.offers[supplier.name], item.quantity);
+      const offer = resolvedOfferForRow(item.offers[supplier.name], quantity);
       const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
       const unitPriceCell = worksheet.getCell(rowNumber, block.unitPriceColumn);
       const totalCell = worksheet.getCell(rowNumber, block.totalColumn);
+      const { unitPrice, lineTotal } = resolveLineValues(offer, quantity);
 
-      writeDynamicCell(unitPriceCell, offer?.unitPrice ?? null);
-      writeDynamicCell(totalCell, offer?.total ?? null);
+      writeDynamicCell(unitPriceCell, unitPrice);
+      writeDynamicCell(totalCell, lineTotal);
 
       if (offer) {
         applyCurrencyFormat(unitPriceCell, offer.currency);
         applyCurrencyFormat(totalCell, offer.currency);
+
+        if (validPositive(lineTotal)) {
+          purchaseTotalsBySupplier.set(
+            supplier.name,
+            (purchaseTotalsBySupplier.get(supplier.name) ?? 0) + lineTotal
+          );
+        }
 
         if (offer.currency === "UNKNOWN") {
           warnings.push(`Moneda no determinada para ${item.product} - ${supplier.name}`);
@@ -270,7 +286,20 @@ export async function generateComparisonExcel(
     }
   }
 
-  writePurchaseTotals(worksheet, itemsToWrite, suppliersToWrite);
+  for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
+    const purchaseTotal = purchaseTotalsBySupplier.get(supplier.name);
+    if (!validPositive(purchaseTotal)) continue;
+
+    const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
+    const offers = itemsToWrite.map((item) => item.offers[supplier.name]);
+    const currency = offerCurrency(offers);
+    const unitSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
+    const totalSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.totalColumn);
+    writeDynamicCell(unitSideCell, purchaseTotal);
+    writeDynamicCell(totalSideCell, purchaseTotal);
+    applyCurrencyFormat(unitSideCell, currency);
+    applyCurrencyFormat(totalSideCell, currency);
+  }
   highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
 
   workbook.calcProperties.fullCalcOnLoad = true;

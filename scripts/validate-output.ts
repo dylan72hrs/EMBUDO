@@ -210,7 +210,11 @@ function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, sup
 
       const expected = unitPrice * quantity;
       if (Math.abs(total - expected) > tolerance) {
-        fail(`TOTAL incorrecto en fila ${row} proveedor ${supplierName}: esperado P_UNIT × CANT.`);
+        fail(`Fallo de Integridad: TOTAL no es igual a P.UNIT * CANT en fila ${row} proveedor ${supplierName}`);
+      }
+
+      if (quantity > 1 && Math.abs(total - unitPrice) <= tolerance) {
+        fail(`Fallo de Integridad: TOTAL no es igual a P.UNIT * CANT en fila ${row} proveedor ${supplierName}`);
       }
 
       supplierTotals.set(supplierIndex, (supplierTotals.get(supplierIndex) ?? 0) + total);
