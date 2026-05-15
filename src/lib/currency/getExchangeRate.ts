@@ -9,9 +9,12 @@ export type ExchangeRateResult = {
   finalRate: number;
   mode: "auto" | "manual" | "fallback" | "env";
   warnings: string[];
+  source: string;
+  date: string;
 };
 
-const MINDICADOR_DOLAR_URL = "https://mindicador.cl/api/dolar";
+const BCENTRAL_INDICATORS_URL =
+  "https://si3.bcentral.cl/Indicadoressiete/secure/Indicadoresdiarios.aspx";
 const DEFAULT_EXCHANGE_RATE_MARGIN_CLP = 5;
 const DEFAULT_FALLBACK_EXCHANGE_RATE_CLP_PER_USD = 950;
 
@@ -33,7 +36,7 @@ function parseMargin() {
   if (margin === undefined) {
     return {
       margin: DEFAULT_EXCHANGE_RATE_MARGIN_CLP,
-      warnings: ["Margen de tipo de cambio inválido; se usó margen por defecto 5 CLP."]
+      warnings: ["Margen de tipo de cambio invalido; se uso margen por defecto 5 CLP."]
     };
   }
 
@@ -44,38 +47,65 @@ function formatRate(value: number) {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(4)));
 }
 
+function currentIsoDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function buildResult(
   baseRate: number,
   margin: number,
   mode: ExchangeRateResult["mode"],
-  warnings: string[]
+  warnings: string[],
+  source: string
 ): ExchangeRateResult {
   return {
     baseRate,
     margin,
     finalRate: baseRate + margin,
     mode,
-    warnings
+    warnings,
+    source,
+    date: currentIsoDate()
   };
 }
 
-async function fetchObservedDollar() {
+function parseChileanNumber(rawValue: string) {
+  const compact = rawValue.replace(/\s/g, "");
+  const normalized = compact.replace(/\./g, "").replace(",", ".");
+  const value = Number(normalized);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
+function extractObservedDollar(html: string) {
+  const labelPattern = /D[oó]lar\s+observado/i;
+  const labelMatch = labelPattern.exec(html);
+  if (!labelMatch || labelMatch.index < 0) return undefined;
+
+  const slice = html.slice(labelMatch.index, labelMatch.index + 800);
+  const valueMatch = /<label[^>]*>\s*([\d\.,]+)\s*<\/label>/i.exec(slice);
+  if (!valueMatch) return undefined;
+
+  return parseChileanNumber(valueMatch[1]);
+}
+
+async function fetchObservedDollarFromBcentral() {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 5000);
 
   try {
-    const response = await fetch(MINDICADOR_DOLAR_URL, {
+    const response = await fetch(BCENTRAL_INDICATORS_URL, {
       method: "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0"
+      },
+      cache: "no-store",
       signal: controller.signal
     });
     if (!response.ok) return undefined;
 
-    const payload = (await response.json()) as {
-      serie?: Array<{ valor?: number }>;
-    };
-    const observed = payload.serie?.[0]?.valor;
-    return Number.isFinite(observed) && observed && observed > 0 ? observed : undefined;
+    const html = await response.text();
+    return extractObservedDollar(html);
   } catch {
     return undefined;
   } finally {
@@ -96,32 +126,51 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
   if (requestedMode === "manual") {
     const manualRate = parsePositive(request.manualExchangeRateClpPerUsd);
     if (!manualRate) {
-      throw new Error("Tipo de cambio manual inválido.");
+      throw new Error("Tipo de cambio manual invalido.");
     }
 
     const finalRate = manualRate + margin;
-    return buildResult(manualRate, margin, "manual", [
-      ...warnings,
-      `Tipo de cambio manual: ${formatRate(manualRate)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
-    ]);
+    return buildResult(
+      manualRate,
+      margin,
+      "manual",
+      [
+        ...warnings,
+        `Tipo de cambio manual: ${formatRate(manualRate)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+      ],
+      "Manual"
+    );
   }
 
-  const observed = await fetchObservedDollar();
+  const observed = await fetchObservedDollarFromBcentral();
   if (observed) {
     const finalRate = observed + margin;
-    return buildResult(observed, margin, "auto", [
-      ...warnings,
-      `Tipo de cambio automático: dólar observado ${formatRate(observed)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
-    ]);
+    return buildResult(
+      observed,
+      margin,
+      "auto",
+      [
+        ...warnings,
+        `Tipo de cambio automatico: dolar observado ${formatRate(observed)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+      ],
+      "Banco Central"
+    );
   }
 
   const envOverride = parsePositive(process.env.EXCHANGE_RATE_CLP_PER_USD);
   if (envOverride) {
     const finalRate = envOverride + margin;
-    return buildResult(envOverride, margin, "env", [
-      ...warnings,
-      `No se pudo obtener dólar observado; se usó tipo de cambio de entorno ${formatRate(envOverride)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
-    ]);
+    return buildResult(
+      envOverride,
+      margin,
+      "env",
+      [
+        ...warnings,
+        "No se pudo obtener dolar observado desde Banco Central.",
+        `Se uso tipo de cambio de entorno ${formatRate(envOverride)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+      ],
+      "Entorno"
+    );
   }
 
   const fallback =
@@ -129,8 +178,15 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
     DEFAULT_FALLBACK_EXCHANGE_RATE_CLP_PER_USD;
   const finalRate = fallback + margin;
 
-  return buildResult(fallback, margin, "fallback", [
-    ...warnings,
-    `No se pudo obtener dólar observado; se usó fallback ${formatRate(fallback)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
-  ]);
+  return buildResult(
+    fallback,
+    margin,
+    "fallback",
+    [
+      ...warnings,
+      "No se pudo obtener dolar observado desde Banco Central.",
+      `Se uso fallback ${formatRate(fallback)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+    ],
+    "fallback"
+  );
 }

@@ -44,10 +44,10 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
     .slice(0, 5);
 
   return (
-    <section className="embudo-analytics-panel space-y-4 rounded-2xl p-5 sm:p-6">
+    <section className="embudo-analytics-panel space-y-4 rounded-2xl p-4 sm:p-5">
       <div>
         <p className="embudo-kicker">Analitica de compra</p>
-        <h3 className="mt-2 text-xl font-semibold text-white sm:text-2xl">Resumen post-proceso</h3>
+        <h3 className="mt-1 text-lg font-semibold text-white sm:text-xl">Resumen post-proceso</h3>
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -63,7 +63,7 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
         </article>
         <article className="embudo-analytics-card">
           <p className="embudo-analytics-label">Mejor proveedor</p>
-          <p className="embudo-analytics-value text-lg">
+          <p className="embudo-analytics-value text-base">
             {analytics.bestSupplier?.name ?? "Sin datos suficientes"}
           </p>
           <p className="embudo-analytics-caption">
@@ -80,8 +80,8 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
       <div className="grid gap-4 xl:grid-cols-[1.5fr_1fr]">
         <article className="embudo-analytics-card">
           <div className="mb-3 flex items-center justify-between gap-3">
-            <h4 className="text-sm font-semibold text-slate-100">Total compra por proveedor</h4>
-            <span className="text-xs text-slate-400">Basado en TOTAL por producto</span>
+            <h4 className="text-xs font-semibold text-slate-100">Total compra por proveedor</h4>
+            <span className="text-[10px] text-slate-400">Basado en TOTAL por producto</span>
           </div>
           {rankedSuppliers.length > 0 ? (
             <div className="space-y-3">
@@ -90,28 +90,28 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
                 const share = costTotal > 0 ? (supplier.total / costTotal) * 100 : 0;
                 return (
                   <div key={supplier.name} className="space-y-1">
-                    <div className="flex items-center justify-between text-xs text-slate-300">
+                    <div className="flex items-center justify-between text-[11px] text-slate-300">
                       <span>{supplier.name}</span>
                       <span>{formatClp(supplier.total)}</span>
                     </div>
                     <div className="h-2 overflow-hidden rounded-full bg-slate-900/70">
                       <div className="embudo-analytics-bar h-full rounded-full" style={{ width: `${width}%` }} />
                     </div>
-                    <p className="text-[11px] text-slate-400">
-                      {supplier.productsQuoted} productos cotizados · {share.toFixed(1)}% del costo total
+                    <p className="text-[10px] text-slate-400">
+                      {supplier.productsQuoted} productos cotizados - {share.toFixed(1)}% del costo total
                     </p>
                   </div>
                 );
               })}
             </div>
           ) : (
-            <p className="text-sm text-slate-300">Sin datos suficientes.</p>
+            <p className="text-xs text-slate-300">Sin datos suficientes.</p>
           )}
         </article>
 
         <article className="embudo-analytics-card">
-          <h4 className="text-sm font-semibold text-slate-100">Tipo de cambio usado</h4>
-          <div className="mt-3 space-y-2 text-sm text-slate-200">
+          <h4 className="text-xs font-semibold text-slate-100">Tipo de cambio usado</h4>
+          <div className="mt-3 space-y-2 text-xs text-slate-200">
             <p>
               Fuente: <span className="font-semibold">{sourceLabel(analytics.exchangeRate.mode)}</span>
             </p>
@@ -127,15 +127,15 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
                 {formatRate(analytics.exchangeRate.finalRate)} CLP/USD
               </span>
             </p>
-            <p className="text-xs text-slate-400">Origen: {analytics.exchangeRate.source}</p>
+            <p className="text-[10px] text-slate-400">Origen: {analytics.exchangeRate.source}</p>
           </div>
         </article>
       </div>
 
       <article className="embudo-analytics-card">
         <div className="mb-3 flex items-center justify-between gap-3">
-          <h4 className="text-sm font-semibold text-slate-100">Productos con mayor diferencia</h4>
-          <span className="text-xs text-slate-400">
+          <h4 className="text-xs font-semibold text-slate-100">Productos con mayor diferencia</h4>
+          <span className="text-[10px] text-slate-400">
             {analytics.hasComparison ? "Comparacion activa" : "Solo un proveedor valido"}
           </span>
         </div>
@@ -147,18 +147,18 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
                 key={`${product.item}-${product.name}`}
                 className="rounded-lg border border-white/10 bg-slate-950/40 p-3"
               >
-                <p className="text-sm font-medium text-slate-100">
+                <p className="text-xs font-medium text-slate-100">
                   {product.item}. {product.name}
                 </p>
-                <p className="mt-1 text-xs text-slate-300">
-                  Menor: {formatClp(product.bestTotal)} · Mayor: {formatClp(product.worstTotal)} · Diferencia:{" "}
-                  <span className="font-semibold text-rose-200">{formatClp(product.spread)}</span>
+                <p className="mt-1 text-[11px] text-slate-300">
+                  Menor: {formatClp(product.bestTotal)} - Mayor: {formatClp(product.worstTotal)} -
+                  Diferencia: <span className="font-semibold text-rose-200">{formatClp(product.spread)}</span>
                 </p>
               </li>
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-slate-300">Sin datos suficientes para comparar diferencias.</p>
+          <p className="text-xs text-slate-300">Sin datos suficientes para comparar diferencias.</p>
         )}
       </article>
     </section>

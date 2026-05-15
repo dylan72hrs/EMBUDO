@@ -15,6 +15,7 @@ const PROCESS_STEPS = [
 ] as const;
 const PROCESS_TIMEOUT_MS = 120_000;
 const EXCHANGE_RATE_MARGIN_CLP = 5;
+const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;
 const EXCHANGE_RATE_SOURCE_URL =
   "https://si3.bcentral.cl/Indicadoressiete/secure/Indicadoresdiarios.aspx";
 const BACKGROUND_VIDEO_URL =
@@ -28,15 +29,20 @@ type ExchangeRateInfo = {
   margin?: number;
   finalRate?: number;
   mode?: "auto" | "manual" | "fallback" | "env";
+  source?: string;
+  date?: string;
+  warning?: string;
   warnings?: string[];
   message?: string;
-  provider?: string;
   sourceUrl?: string;
 };
 
 function formatRate(value?: number) {
   if (value === undefined) return "No disponible";
-  return Number.isInteger(value) ? value.toString() : value.toFixed(2);
+  return new Intl.NumberFormat("es-CL", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(value);
 }
 
 export default function Home() {
@@ -66,25 +72,31 @@ export default function Home() {
 
   useEffect(() => {
     const controller = new AbortController();
-    const params = new URLSearchParams();
-    params.set("mode", exchangeRateMode);
-    if (exchangeRateMode === "manual" && manualExchangeRateValue !== undefined) {
-      params.set("manualExchangeRateClpPerUsd", String(manualExchangeRateValue));
+    let intervalId: number | undefined;
+
+    function buildParams() {
+      const params = new URLSearchParams();
+      params.set("mode", exchangeRateMode);
+      if (exchangeRateMode === "manual" && manualExchangeRateValue !== undefined) {
+        params.set("manualExchangeRateClpPerUsd", String(manualExchangeRateValue));
+      }
+      return params;
     }
 
     async function loadExchangeRate() {
       setExchangeRateLoading(true);
       try {
-        const response = await fetch(`/api/exchange-rate?${params.toString()}`, {
+        const response = await fetch(`/api/exchange-rate?${buildParams().toString()}`, {
           signal: controller.signal
         });
         const payload = (await response.json()) as ExchangeRateInfo;
+        if (!response.ok) {
+          throw new Error(payload.message ?? "No se pudo obtener tipo de cambio.");
+        }
         setExchangeRateInfo(payload);
       } catch {
         if (!controller.signal.aborted) {
-          setExchangeRateInfo({
-            message: "No se pudo cargar el dolar observado."
-          });
+          setExchangeRateInfo((previous) => previous ?? { message: "No se pudo cargar el dolar observado." });
         }
       } finally {
         if (!controller.signal.aborted) {
@@ -94,7 +106,14 @@ export default function Home() {
     }
 
     void loadExchangeRate();
-    return () => controller.abort();
+    intervalId = window.setInterval(() => {
+      void loadExchangeRate();
+    }, EXCHANGE_RATE_REFRESH_MS);
+
+    return () => {
+      controller.abort();
+      if (intervalId) window.clearInterval(intervalId);
+    };
   }, [exchangeRateMode, manualExchangeRateValue]);
 
   function removeFile(index: number) {
@@ -198,7 +217,7 @@ export default function Home() {
   const exchangeApplied =
     exchangeRateMode === "manual" ? manualFinalExchangeRate : exchangeRateInfo?.finalRate;
   const exchangeSourceUrl = exchangeRateInfo?.sourceUrl ?? EXCHANGE_RATE_SOURCE_URL;
-  const exchangeProvider = exchangeRateInfo?.provider ?? "Banco Central";
+  const exchangeProvider = exchangeRateInfo?.source ?? "Banco Central";
 
   return (
     <main className="relative min-h-screen overflow-hidden text-slate-100">
@@ -214,31 +233,24 @@ export default function Home() {
       <div className="embudo-bg-overlay" />
       <div className="embudo-bg-gradient" />
 
-      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-6xl flex-col px-4 py-6 sm:px-6 sm:py-8">
+      <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-5xl flex-col px-4 py-3 sm:px-6 sm:py-4">
         {screen === "upload" && (
-          <section className="mt-5 flex-1">
-            <div className="mx-auto max-w-4xl text-center">
-              <div className="embudo-branding-shell mb-6">
-                <div>
-                  <p className="embudo-branding-title">MASTER DRILLING</p>
-                  <p className="embudo-branding-subtitle">Área TI</p>
-                </div>
-                <span className="embudo-online-badge">Online</span>
-              </div>
-              <p className="embudo-kicker">Automatizacion inteligente</p>
+          <section className="relative mt-1 flex-1 pb-20">
+            <span className="embudo-online-badge embudo-online-floating">Online</span>
+            <div className="mx-auto max-w-3xl text-center">
               <h1 className="embudo-hero-title">
                 Genera tu{" "}
                 <span className="embudo-gradient-title" aria-label="tabla comparativa">
                   tabla comparativa
                 </span>
               </h1>
-              <p className="mx-auto mt-4 max-w-3xl text-base leading-7 text-slate-300 sm:text-lg">
+              <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
                 Sube cotizaciones PDF y obten un Excel listo para comparar proveedores, precios y
                 condiciones.
               </p>
             </div>
 
-            <div className="embudo-glass mx-auto mt-8 max-w-5xl rounded-3xl p-5 sm:p-7">
+            <div className="embudo-glass mx-auto mt-4 max-w-4xl rounded-3xl p-4 sm:p-5">
               <section className="rounded-2xl border border-white/10 bg-slate-950/35 p-4 sm:p-5">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-200">
@@ -326,6 +338,9 @@ export default function Home() {
                         : "No disponible"}
                     </span>
                   </p>
+                  {exchangeRateInfo?.warning && (
+                    <p className="mt-1 text-xs text-amber-200">{exchangeRateInfo.warning}</p>
+                  )}
                   <a
                     href={exchangeSourceUrl}
                     target="_blank"
@@ -343,7 +358,7 @@ export default function Home() {
                 )}
               </section>
 
-              <div className="mt-5">
+              <div className="mt-4">
                 <PdfUploader files={quotes} onFiles={setQuotes} onRemove={removeFile} />
               </div>
 
@@ -351,10 +366,16 @@ export default function Home() {
                 type="button"
                 disabled={!canSubmit}
                 onClick={goToConfirm}
-                className="embudo-primary-btn mt-6 h-12 w-full text-sm font-semibold"
+                className="embudo-primary-btn mt-5 h-11 w-full text-sm font-semibold"
               >
                 Enviar cotizaciones
               </button>
+            </div>
+
+            <div className="embudo-branding-corner" aria-hidden>
+              <p className="embudo-branding-title">MASTER DRILLING</p>
+              <p className="embudo-branding-subtitle">Área TI</p>
+              <p className="embudo-kicker embudo-branding-kicker">Automatizacion inteligente</p>
             </div>
           </section>
         )}
@@ -411,13 +432,13 @@ export default function Home() {
         )}
 
         {screen === "success" && (
-          <div className="mx-auto mt-6 w-full max-w-5xl space-y-5 pb-8">
+          <div className="mx-auto mt-4 w-full max-w-4xl space-y-4 pb-6">
             <ProcessingSummary result={result} />
             {result?.analytics && <PurchaseAnalyticsDashboard analytics={result.analytics} />}
             <button
               type="button"
               onClick={resetFlow}
-              className="embudo-secondary-btn h-11 rounded-xl px-5 text-sm font-semibold"
+              className="embudo-secondary-btn h-10 rounded-xl px-5 text-sm font-semibold"
             >
               Procesar nuevas cotizaciones
             </button>

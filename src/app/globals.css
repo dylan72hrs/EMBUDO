@@ -122,9 +122,9 @@ body {
 }
 
 .embudo-hero-title {
-  margin-top: 0.6rem;
-  font-size: clamp(2.05rem, 6vw, 4.2rem);
-  line-height: 1.06;
+  margin-top: 0.2rem;
+  font-size: clamp(1.75rem, 5vw, 3.5rem);
+  line-height: 1.02;
   font-weight: 700;
   color: #f6f9ff;
 }
@@ -215,28 +215,63 @@ body {
 }
 
 .embudo-analytics-label {
-  font-size: 0.72rem;
+  font-size: 0.66rem;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   color: #97a8cd;
 }
 
 .embudo-analytics-value {
-  margin-top: 8px;
-  font-size: 1.5rem;
+  margin-top: 6px;
+  font-size: 1.18rem;
   font-weight: 700;
   color: #f4f8ff;
 }
 
 .embudo-analytics-caption {
-  margin-top: 4px;
-  font-size: 0.77rem;
+  margin-top: 3px;
+  font-size: 0.7rem;
   color: #95a4c6;
 }
 
 .embudo-analytics-bar {
   background: linear-gradient(95deg, #4ad6ff, #5f9dff 50%, #8d78ff);
   box-shadow: 0 0 18px rgba(95, 190, 255, 0.32);
+}
+
+.embudo-online-floating {
+  position: absolute;
+  top: 0;
+  right: 0;
+  padding: 4px 10px;
+  font-size: 0.68rem;
+}
+
+.embudo-branding-corner {
+  position: absolute;
+  left: 0;
+  bottom: 6px;
+  opacity: 0.92;
+}
+
+.embudo-branding-kicker {
+  margin-top: 4px;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  color: #8fbaf1;
+}
+
+@media (max-width: 768px) {
+  .embudo-branding-corner {
+    position: static;
+    margin-top: 16px;
+    text-align: center;
+  }
+
+  .embudo-online-floating {
+    top: -4px;
+    right: 2px;
+  }
 }
 
 @keyframes embudo-drift {
