@@ -31,17 +31,17 @@ export function PdfUploader({ files, onFiles, onRemove }: Props) {
   });
 
   return (
-    <section className="space-y-5">
+    <section className="space-y-3.5">
       <div
         {...getRootProps()}
-        className={`group flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed px-6 py-8 text-center transition ${
+        className={`group flex min-h-52 flex-col items-center justify-center rounded-2xl border border-dashed px-5 py-6 text-center transition ${
           isDragActive
             ? "border-cyan-300 bg-cyan-400/10 shadow-[0_0_0_4px_rgba(103,232,249,0.14)]"
-            : "border-slate-400/40 bg-slate-950/35 hover:border-cyan-300/60 hover:bg-slate-900/40"
+            : "border-white/35 bg-slate-950/30 hover:border-cyan-200/80 hover:bg-slate-900/45"
         }`}
       >
         <input {...getInputProps()} />
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-slate-400/35 bg-slate-900/75 text-cyan-100 transition group-hover:border-cyan-300/70 group-hover:text-cyan-200">
+        <div className="flex h-14 w-14 items-center justify-center rounded-2xl border border-white/35 bg-slate-900/70 text-cyan-100 transition group-hover:border-cyan-300/70 group-hover:text-cyan-200">
           <svg viewBox="0 0 24 24" width="28" height="28" fill="none" aria-hidden>
             <path
               d="M8 3.5h6l4 4v12a1 1 0 0 1-1 1H8a1 1 0 0 1-1-1v-15a1 1 0 0 1 1-1z"
@@ -53,28 +53,28 @@ export function PdfUploader({ files, onFiles, onRemove }: Props) {
             <path d="M8.4 13h7.2" stroke="currentColor" strokeWidth="1.4" />
           </svg>
         </div>
-        <h2 className="mt-5 text-xl font-semibold text-white">Arrastra tus cotizaciones PDF</h2>
-        <p className="mt-2 max-w-md text-sm leading-6 text-slate-300">
+        <h2 className="mt-4 text-lg font-semibold text-white">Arrastra tus cotizaciones PDF</h2>
+        <p className="mt-1.5 max-w-md text-sm leading-6 text-white/82">
           Puedes subir hasta 20 archivos PDF, con un maximo de 20 MB por archivo.
         </p>
         <button
           type="button"
           onClick={open}
-          className="mt-6 h-11 rounded-xl border border-cyan-300/30 bg-cyan-400/20 px-5 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/30 hover:text-white"
+          className="mt-4 h-10 rounded-xl border border-cyan-200/45 bg-cyan-400/20 px-4 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-300/30 hover:text-white"
         >
           Anadir archivos
         </button>
       </div>
 
       {files.length > 0 && (
-        <div className="rounded-2xl border border-slate-400/30 bg-slate-950/40">
+        <div className="rounded-2xl border border-white/20 bg-slate-950/40">
           <div className="flex items-center justify-between border-b border-slate-800/90 px-4 py-3">
             <p className="text-sm font-semibold text-white">Archivos seleccionados</p>
-            <span className="rounded-full border border-slate-500/40 bg-slate-900/80 px-3 py-1 text-xs text-slate-300">
+            <span className="rounded-full border border-white/20 bg-slate-900/80 px-3 py-1 text-xs text-white/80">
               {files.length} de 20
             </span>
           </div>
-          <ul className="max-h-64 divide-y divide-slate-800/80 overflow-auto">
+          <ul className="max-h-52 divide-y divide-slate-800/80 overflow-auto">
             {files.map((file, index) => (
               <li key={`${file.name}-${file.size}`} className="flex items-center gap-3 px-4 py-3">
                 <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-cyan-300/20 bg-cyan-400/10 text-xs font-bold text-cyan-200">

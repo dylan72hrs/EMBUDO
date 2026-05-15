@@ -16,41 +16,125 @@ body {
   color: #e9efff;
 }
 
-.embudo-video-bg {
+.embudo-bg-video {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(1.15) contrast(1.04) brightness(0.52);
+  filter: saturate(1.15) contrast(1.04) brightness(0.5);
+}
+
+.embudo-bg-video-initial {
+  object-position: top;
+}
+
+.embudo-bg-video-processing {
+  transform: translateY(17%);
+}
+
+.embudo-bg-base {
+  position: absolute;
+  inset: 0;
+}
+
+.embudo-bg-initial {
+  background: linear-gradient(180deg, #02050d 0%, #030814 100%);
+}
+
+.embudo-bg-processing {
+  background:
+    radial-gradient(100% 120% at 18% 8%, rgba(45, 124, 255, 0.18), transparent 50%),
+    linear-gradient(180deg, #030711 0%, #040811 100%);
+}
+
+.embudo-bg-success {
+  background:
+    radial-gradient(110% 120% at 78% 12%, rgba(97, 169, 255, 0.2), transparent 50%),
+    linear-gradient(180deg, #020610 0%, #040a14 100%);
 }
 
 .embudo-bg-overlay {
   position: absolute;
   inset: 0;
-  background:
-    radial-gradient(circle at 20% 20%, rgba(43, 120, 255, 0.28), transparent 40%),
-    radial-gradient(circle at 78% 12%, rgba(145, 74, 255, 0.24), transparent 46%),
-    linear-gradient(180deg, rgba(1, 4, 12, 0.5), rgba(1, 5, 16, 0.92));
+}
+
+.embudo-bg-overlay-initial {
+  background: linear-gradient(180deg, rgba(3, 8, 16, 0.34), rgba(3, 8, 16, 0.62));
+}
+
+.embudo-bg-overlay-processing {
+  background: linear-gradient(180deg, rgba(3, 8, 16, 0.56), rgba(3, 8, 16, 0.88));
+}
+
+.embudo-bg-overlay-success {
+  background: linear-gradient(180deg, rgba(2, 7, 16, 0.54), rgba(2, 7, 16, 0.9));
 }
 
 .embudo-bg-gradient {
   position: absolute;
   inset: -12%;
-  background:
-    radial-gradient(circle at 18% 70%, rgba(31, 179, 255, 0.12), transparent 34%),
-    radial-gradient(circle at 84% 72%, rgba(136, 95, 255, 0.14), transparent 38%);
-  animation: embudo-drift 18s ease-in-out infinite alternate;
   pointer-events: none;
+}
+
+.embudo-bg-gradient-initial {
+  background: radial-gradient(circle at 50% 84%, rgba(255, 255, 255, 0.06), transparent 42%);
+  animation: embudo-drift 24s ease-in-out infinite alternate;
+}
+
+.embudo-bg-gradient-processing {
+  background:
+    radial-gradient(circle at 24% 78%, rgba(53, 158, 255, 0.1), transparent 36%),
+    radial-gradient(circle at 76% 68%, rgba(97, 103, 255, 0.1), transparent 42%);
+  animation: embudo-drift 20s ease-in-out infinite alternate;
+}
+
+.embudo-bg-gradient-success {
+  background:
+    radial-gradient(circle at 20% 75%, rgba(48, 173, 255, 0.12), transparent 38%),
+    radial-gradient(circle at 82% 18%, rgba(119, 130, 255, 0.12), transparent 40%);
+  animation: embudo-drift 22s ease-in-out infinite alternate;
 }
 
 .embudo-glass {
   border: 1px solid rgba(185, 214, 255, 0.24);
-  background: linear-gradient(135deg, rgba(20, 33, 65, 0.55), rgba(12, 18, 44, 0.48));
+  background: linear-gradient(135deg, rgba(8, 13, 26, 0.58), rgba(6, 10, 22, 0.5));
   backdrop-filter: blur(14px);
   box-shadow:
     0 20px 48px rgba(2, 5, 18, 0.5),
     inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.liquid-glass {
+  background: rgba(255, 255, 255, 0.01);
+  background-blend-mode: luminosity;
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  border: none;
+  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.1);
+  position: relative;
+  overflow: hidden;
+}
+
+.liquid-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.4px;
+  background: linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.45) 0%,
+    rgba(255, 255, 255, 0.15) 20%,
+    rgba(255, 255, 255, 0) 40%,
+    rgba(255, 255, 255, 0) 60%,
+    rgba(255, 255, 255, 0.15) 80%,
+    rgba(255, 255, 255, 0.45) 100%
+  );
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
 }
 
 .embudo-header {
@@ -141,9 +225,9 @@ body {
 
 .embudo-option {
   border-radius: 14px;
-  border: 1px solid rgba(151, 180, 224, 0.35);
-  background: rgba(13, 21, 47, 0.52);
-  padding: 12px;
+  border: 1px solid rgba(196, 220, 255, 0.34);
+  background: rgba(6, 11, 24, 0.62);
+  padding: 10px;
   transition: all 180ms ease;
 }
 
@@ -153,9 +237,9 @@ body {
 }
 
 .embudo-option.active {
-  border-color: rgba(83, 238, 255, 0.75);
-  background: linear-gradient(145deg, rgba(45, 129, 255, 0.3), rgba(133, 88, 255, 0.24));
-  box-shadow: inset 0 0 0 1px rgba(89, 220, 255, 0.3);
+  border-color: rgba(142, 229, 255, 0.84);
+  background: linear-gradient(145deg, rgba(18, 54, 114, 0.46), rgba(58, 42, 120, 0.42));
+  box-shadow: inset 0 0 0 1px rgba(112, 216, 255, 0.3);
 }
 
 .embudo-primary-btn {
@@ -245,6 +329,18 @@ body {
   right: 0;
   padding: 4px 10px;
   font-size: 0.68rem;
+}
+
+.embudo-upload-subtitle {
+  color: rgba(255, 255, 255, 0.84);
+}
+
+.embudo-upload-card-title {
+  color: rgba(255, 255, 255, 0.96);
+}
+
+.embudo-upload-card-meta {
+  color: rgba(255, 255, 255, 0.72);
 }
 
 .embudo-branding-corner {

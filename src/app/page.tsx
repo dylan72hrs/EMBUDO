@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { PdfUploader } from "@/components/PdfUploader";
 import { ProcessingSummary, type ProcessResult } from "@/components/ProcessingSummary";
 import { PurchaseAnalyticsDashboard } from "@/components/PurchaseAnalyticsDashboard";
+import { CinematicBackground, type BackgroundMode } from "@/components/CinematicBackground";
 
 const PROCESS_STEPS = [
   "Subiendo archivos...",
@@ -18,8 +19,6 @@ const EXCHANGE_RATE_MARGIN_CLP = 5;
 const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;
 const EXCHANGE_RATE_SOURCE_URL =
   "https://si3.bcentral.cl/Indicadoressiete/secure/Indicadoresdiarios.aspx";
-const BACKGROUND_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260508_155101_f2540600-6fe9-433e-8e48-b3f4b72f0727.mp4";
 
 type Screen = "upload" | "confirm" | "processing" | "success" | "error";
 type ExchangeRateMode = "auto" | "manual";
@@ -218,45 +217,36 @@ export default function Home() {
     exchangeRateMode === "manual" ? manualFinalExchangeRate : exchangeRateInfo?.finalRate;
   const exchangeSourceUrl = exchangeRateInfo?.sourceUrl ?? EXCHANGE_RATE_SOURCE_URL;
   const exchangeProvider = exchangeRateInfo?.source ?? "Banco Central";
+  const backgroundMode: BackgroundMode = screen === "processing" ? "processing" : screen === "success" ? "success" : "initial";
 
   return (
     <main className="relative min-h-screen overflow-hidden text-slate-100">
-      <video
-        className="embudo-video-bg"
-        src={BACKGROUND_VIDEO_URL}
-        autoPlay
-        loop
-        muted
-        playsInline
-        aria-hidden
-      />
-      <div className="embudo-bg-overlay" />
-      <div className="embudo-bg-gradient" />
+      <CinematicBackground mode={backgroundMode} />
 
       <div className="relative z-10 mx-auto flex min-h-screen w-full max-w-5xl flex-col px-4 py-3 sm:px-6 sm:py-4">
         {screen === "upload" && (
-          <section className="relative mt-1 flex-1 pb-20">
+          <section className="relative mt-0.5 flex-1 pb-16">
             <span className="embudo-online-badge embudo-online-floating">Online</span>
-            <div className="mx-auto max-w-3xl text-center">
+            <div className="mx-auto max-w-2xl text-center">
               <h1 className="embudo-hero-title">
                 Genera tu{" "}
                 <span className="embudo-gradient-title" aria-label="tabla comparativa">
                   tabla comparativa
                 </span>
               </h1>
-              <p className="mx-auto mt-3 max-w-2xl text-sm leading-6 text-slate-300 sm:text-base">
+              <p className="embudo-upload-subtitle mx-auto mt-2.5 max-w-xl text-sm leading-6 sm:text-[15px]">
                 Sube cotizaciones PDF y obten un Excel listo para comparar proveedores, precios y
                 condiciones.
               </p>
             </div>
 
-            <div className="embudo-glass mx-auto mt-4 max-w-4xl rounded-3xl p-4 sm:p-5">
-              <section className="rounded-2xl border border-white/10 bg-slate-950/35 p-4 sm:p-5">
+            <div className="embudo-glass liquid-glass mx-auto mt-3.5 w-full max-w-[860px] rounded-3xl p-3.5 sm:p-4">
+              <section className="rounded-2xl border border-white/15 bg-slate-950/30 p-3.5 sm:p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
-                  <h2 className="text-sm font-semibold uppercase tracking-[0.08em] text-slate-200">
+                  <h2 className="embudo-upload-card-title text-xs font-semibold uppercase tracking-[0.08em]">
                     Tipo de cambio USD
                   </h2>
-                  <span className="text-xs text-slate-400">
+                  <span className="embudo-upload-card-meta text-[11px]">
                     {exchangeRateLoading ? "Actualizando..." : "Referencia diaria"}
                   </span>
                 </div>
@@ -275,7 +265,7 @@ export default function Home() {
                       className="sr-only"
                     />
                     <span className="text-sm font-semibold">Automatico</span>
-                    <span className="mt-1 block text-xs text-slate-300">
+                    <span className="mt-1 block text-xs text-white/82">
                       Usar dolar observado del dia + $5
                     </span>
                   </label>
@@ -293,13 +283,13 @@ export default function Home() {
                       className="sr-only"
                     />
                     <span className="text-sm font-semibold">Manual</span>
-                    <span className="mt-1 block text-xs text-slate-300">Ingresar dolar manual</span>
+                    <span className="mt-1 block text-xs text-white/82">Ingresar dolar manual</span>
                   </label>
                 </div>
 
                 {exchangeRateMode === "manual" && (
-                  <div className="mt-4 rounded-xl border border-white/10 bg-slate-950/45 p-4">
-                    <label className="text-sm font-medium text-slate-200" htmlFor="manualExchangeRate">
+                  <div className="mt-4 rounded-xl border border-white/15 bg-slate-950/45 p-3.5">
+                    <label className="text-sm font-medium text-white/92" htmlFor="manualExchangeRate">
                       1 USD =
                     </label>
                     <div className="mt-2 flex items-center gap-2">
@@ -316,21 +306,21 @@ export default function Home() {
                         }}
                         className="h-10 w-40 rounded-xl border border-slate-500 bg-slate-950/75 px-3 text-sm text-white outline-none transition focus:border-cyan-300"
                       />
-                      <span className="text-sm text-slate-300">CLP</span>
+                      <span className="text-sm text-white/85">CLP</span>
                     </div>
-                    <p className="mt-2 text-xs text-slate-300">
+                    <p className="mt-2 text-xs text-white/80">
                       Se sumaran automaticamente $5 al valor ingresado.
                     </p>
                   </div>
                 )}
 
-                <div className="mt-4 rounded-xl border border-cyan-300/20 bg-cyan-900/10 p-4">
-                  <p className="text-sm text-slate-200">
+                <div className="mt-4 rounded-xl border border-cyan-200/35 bg-slate-950/36 p-3.5">
+                  <p className="text-sm text-white/92">
                     Dolar observado hoy:{" "}
                     <span className="font-semibold text-white">{formatRate(exchangeBase)}</span>
                   </p>
-                  <p className="mt-1 text-xs text-slate-300">by: {exchangeProvider}</p>
-                  <p className="mt-1 text-sm text-slate-200">
+                  <p className="mt-1 text-xs text-white/80">by: {exchangeProvider}</p>
+                  <p className="mt-1 text-sm text-white/92">
                     Tipo de cambio aplicado:{" "}
                     <span className="font-semibold text-cyan-200">
                       {exchangeApplied !== undefined
@@ -358,7 +348,7 @@ export default function Home() {
                 )}
               </section>
 
-              <div className="mt-4">
+              <div className="mt-3.5">
                 <PdfUploader files={quotes} onFiles={setQuotes} onRemove={removeFile} />
               </div>
 
@@ -366,7 +356,7 @@ export default function Home() {
                 type="button"
                 disabled={!canSubmit}
                 onClick={goToConfirm}
-                className="embudo-primary-btn mt-5 h-11 w-full text-sm font-semibold"
+                className="embudo-primary-btn mt-4 h-10 w-full text-sm font-semibold"
               >
                 Enviar cotizaciones
               </button>
@@ -382,7 +372,7 @@ export default function Home() {
 
         {screen === "confirm" && (
           <div className="fixed inset-0 z-20 flex items-center justify-center bg-slate-950/80 px-4">
-            <div className="embudo-glass w-full max-w-md rounded-2xl p-6">
+            <div className="embudo-glass liquid-glass w-full max-w-md rounded-2xl p-6">
               <h2 className="text-xl font-semibold">Confirmar envio</h2>
               <p className="mt-3 text-sm leading-6 text-slate-300">
                 Vas a procesar {quotes.length} cotizaciones. Verifica que no falte ningun archivo antes de
@@ -406,7 +396,7 @@ export default function Home() {
 
         {screen === "processing" && (
           <div className="mx-auto my-auto w-full max-w-3xl">
-            <section className="embudo-glass rounded-3xl p-6 text-center sm:p-8">
+            <section className="embudo-glass liquid-glass rounded-3xl p-6 text-center sm:p-8">
               <p className="embudo-kicker">Procesamiento real</p>
               <h2 className="mt-2 text-3xl font-semibold">Estamos preparando el Excel</h2>
               <p className="mt-3 text-sm text-slate-300">{PROCESS_STEPS[stepIndex]}</p>
