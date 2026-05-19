@@ -422,7 +422,7 @@ export default function Home() {
         )}
 
         {screen === "success" && (
-          <div className="mx-auto mt-4 w-full max-w-4xl space-y-4 pb-6">
+          <div className="relative mx-auto mt-4 w-full max-w-4xl space-y-4 pb-10">
             <ProcessingSummary result={result} />
             {result?.analytics && <PurchaseAnalyticsDashboard analytics={result.analytics} />}
             <button
@@ -432,6 +432,9 @@ export default function Home() {
             >
               Procesar nuevas cotizaciones
             </button>
+            <div className="embudo-success-branding" aria-hidden>
+              <p className="embudo-branding-title">MASTER DRILLING</p>
+            </div>
           </div>
         )}
 

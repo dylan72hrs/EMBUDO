@@ -22,7 +22,7 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(1.15) contrast(1.04) brightness(0.5);
+  filter: saturate(1.1) contrast(1.02) brightness(0.7);
 }
 
 .embudo-bg-video-initial {
@@ -60,15 +60,15 @@ body {
 }
 
 .embudo-bg-overlay-initial {
-  background: linear-gradient(180deg, rgba(3, 8, 16, 0.34), rgba(3, 8, 16, 0.62));
+  background: linear-gradient(180deg, rgba(3, 8, 16, 0.22), rgba(3, 8, 16, 0.45));
 }
 
 .embudo-bg-overlay-processing {
-  background: linear-gradient(180deg, rgba(3, 8, 16, 0.56), rgba(3, 8, 16, 0.88));
+  background: linear-gradient(180deg, rgba(3, 8, 16, 0.28), rgba(3, 8, 16, 0.56));
 }
 
 .embudo-bg-overlay-success {
-  background: linear-gradient(180deg, rgba(2, 7, 16, 0.54), rgba(2, 7, 16, 0.9));
+  background: linear-gradient(180deg, rgba(2, 7, 16, 0.24), rgba(2, 7, 16, 0.52));
 }
 
 .embudo-bg-gradient {
@@ -91,8 +91,8 @@ body {
 
 .embudo-bg-gradient-success {
   background:
-    radial-gradient(circle at 20% 75%, rgba(48, 173, 255, 0.12), transparent 38%),
-    radial-gradient(circle at 82% 18%, rgba(119, 130, 255, 0.12), transparent 40%);
+    radial-gradient(circle at 20% 75%, rgba(48, 173, 255, 0.08), transparent 38%),
+    radial-gradient(circle at 82% 18%, rgba(119, 130, 255, 0.08), transparent 40%);
   animation: embudo-drift 22s ease-in-out infinite alternate;
 }
 
@@ -278,7 +278,7 @@ body {
 
 .embudo-analytics-panel {
   border: 1px solid rgba(133, 193, 255, 0.24);
-  background: linear-gradient(155deg, rgba(13, 26, 58, 0.74), rgba(11, 18, 42, 0.78));
+  background: linear-gradient(155deg, rgba(7, 15, 34, 0.56), rgba(9, 14, 29, 0.52));
   backdrop-filter: blur(12px);
   box-shadow:
     0 18px 38px rgba(3, 8, 23, 0.45),
@@ -287,9 +287,9 @@ body {
 
 .embudo-analytics-card {
   border-radius: 14px;
-  border: 1px solid rgba(145, 202, 255, 0.2);
-  background: linear-gradient(150deg, rgba(14, 23, 50, 0.72), rgba(8, 14, 34, 0.82));
-  padding: 14px;
+  border: 1px solid rgba(176, 215, 255, 0.26);
+  background: linear-gradient(150deg, rgba(7, 13, 28, 0.64), rgba(8, 12, 24, 0.58));
+  padding: 12px;
   transition: border-color 180ms ease, transform 180ms ease;
 }
 
@@ -321,6 +321,55 @@ body {
 .embudo-analytics-bar {
   background: linear-gradient(95deg, #4ad6ff, #5f9dff 50%, #8d78ff);
   box-shadow: 0 0 18px rgba(95, 190, 255, 0.32);
+}
+
+.embudo-widget-card {
+  max-height: 250px;
+  overflow: auto;
+}
+
+.embudo-widget-title {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: rgba(255, 255, 255, 0.95);
+  letter-spacing: 0.02em;
+}
+
+.embudo-widget-meta {
+  font-size: 0.62rem;
+  color: rgba(255, 255, 255, 0.65);
+}
+
+.embudo-coverage-ok {
+  background: linear-gradient(90deg, #34d399, #2dd4bf);
+}
+
+.embudo-coverage-low {
+  background: linear-gradient(90deg, #fb7185, #ef4444);
+}
+
+.embudo-segment-green {
+  background: linear-gradient(90deg, #22c55e, #34d399);
+}
+
+.embudo-segment-yellow {
+  background: linear-gradient(90deg, #facc15, #f59e0b);
+}
+
+.embudo-segment-red {
+  background: linear-gradient(90deg, #fb7185, #ef4444);
+}
+
+.embudo-bullet-fill {
+  background: linear-gradient(90deg, #67e8f9, #60a5fa);
+}
+
+.embudo-success-branding {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  opacity: 0.86;
+  pointer-events: none;
 }
 
 .embudo-online-floating {
