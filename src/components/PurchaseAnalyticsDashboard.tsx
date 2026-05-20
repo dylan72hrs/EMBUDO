@@ -2,6 +2,7 @@ import type { PurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
 
 type Props = {
   analytics: PurchaseAnalytics;
+  budgetObjective?: number | null;
 };
 
 type PriceConsistency = {
@@ -82,7 +83,7 @@ function optimizedOrderTotal(analytics: PurchaseAnalytics) {
   }, 0);
 }
 
-export function PurchaseAnalyticsDashboard({ analytics }: Props) {
+export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props) {
   const totalProducts = analytics.products.length;
   const suppliersByCost = [...analytics.suppliers]
     .filter((supplier) => supplier.total > 0)
@@ -93,8 +94,14 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
 
   const optimizedTotal = optimizedOrderTotal(analytics);
   const referenceBudgetRaw =
-    suppliersByCost.length > 0 ? suppliersByCost.reduce((sum, supplier) => sum + supplier.total, 0) / suppliersByCost.length : 0;
+    typeof budgetObjective === "number" && Number.isFinite(budgetObjective) && budgetObjective > 0
+      ? budgetObjective
+      : suppliersByCost.length > 0
+        ? suppliersByCost.reduce((sum, supplier) => sum + supplier.total, 0) / suppliersByCost.length
+        : 0;
   const referenceBudget = referenceBudgetRaw > 0 ? referenceBudgetRaw : optimizedTotal;
+  const usesManualBudget =
+    typeof budgetObjective === "number" && Number.isFinite(budgetObjective) && budgetObjective > 0;
   const savings = referenceBudget - optimizedTotal;
   const savingsPercent = referenceBudget > 0 ? percentage(savings, referenceBudget) : 0;
   const bulletProgress = referenceBudget > 0 ? clampPercent((optimizedTotal / referenceBudget) * 100) : 0;
@@ -215,7 +222,9 @@ export function PurchaseAnalyticsDashboard({ analytics }: Props) {
 
           <div className="space-y-2 text-[11px] text-white/85">
             <p>Orden optimizada: {formatClp(optimizedTotal)}</p>
-            <p>Presupuesto de referencia: {formatClp(referenceBudget)}</p>
+            <p>
+              {usesManualBudget ? "Presupuesto objetivo" : "Presupuesto de referencia"}: {formatClp(referenceBudget)}
+            </p>
             <div className="h-3 rounded-full bg-slate-900/75 p-[2px]">
               <div className="h-full rounded-full bg-slate-950/80">
                 <div className="embudo-bullet-fill h-full rounded-full" style={{ width: `${bulletProgress}%` }} />

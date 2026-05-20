@@ -5,7 +5,11 @@ import { prisma } from "@/lib/db/client";
 import { extractTextFromPdf } from "@/lib/pdf/extractTextFromPdf";
 import { parseQuoteFromText } from "@/lib/parser/parseQuoteFromText";
 import { consolidateQuotes } from "@/lib/normalize/consolidateQuotes";
-import { generateComparisonExcel } from "@/lib/excel/generateComparisonExcel";
+import {
+  generateComparisonExcel,
+  type AdditionalEvaluationData,
+  type SupplierEvaluationInput
+} from "@/lib/excel/generateComparisonExcel";
 import { parseExchangeRateValue, type ExchangeRateRequest } from "@/lib/currency/getExchangeRate";
 import { buildPurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
 import {
@@ -146,8 +150,107 @@ function buildInvalidDiagnostic(filename: string, kind: DocumentKind, looksLikeQ
   };
 }
 
+function safeText(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function safeChoice(value: unknown) {
+  const text = safeText(value);
+  if (!text) return undefined;
+  return normalizeText(text) === "no informado" ? undefined : text;
+}
+
+function parseBudget(value: unknown) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const normalized = String(value).trim().replace(/\./g, "").replace(",", ".");
+  const numeric = Number(normalized);
+  return Number.isFinite(numeric) && numeric > 0 ? numeric : undefined;
+}
+
+function parseSupplierEvaluations(value: unknown): SupplierEvaluationInput[] {
+  if (!Array.isArray(value)) return [];
+  const parsed: SupplierEvaluationInput[] = [];
+
+  for (const item of value) {
+    if (!item || typeof item !== "object") continue;
+    const record = item as Record<string, unknown>;
+    const supplierName = safeText(record.supplierName);
+    if (!supplierName) continue;
+
+    parsed.push({
+      supplierName,
+      paymentCondition: safeText(record.paymentCondition),
+      deliveryTime: safeText(record.deliveryTime),
+      availability: safeText(record.availability),
+      associatedCosts: safeText(record.associatedCosts),
+      creditStatus: safeChoice(record.creditStatus),
+      providerEvaluation: safeChoice(record.providerEvaluation)
+    });
+  }
+
+  return parsed;
+}
+
+function readAdditionalEvaluationData(formData: FormData): AdditionalEvaluationData | undefined {
+  const raw = formData.get("additionalEvaluationData");
+  if (typeof raw !== "string" || !raw.trim()) return undefined;
+
+  try {
+    const parsed = JSON.parse(raw) as Record<string, unknown>;
+    const supplierEvaluations = parseSupplierEvaluations(parsed.supplierEvaluations);
+    const additionalEvaluation: AdditionalEvaluationData = {
+      awardCriteria: safeText(parsed.awardCriteria),
+      awardResponsible: safeText(parsed.awardResponsible),
+      buyerResponsible: safeText(parsed.buyerResponsible),
+      urgency: safeChoice(parsed.urgency),
+      budgetObjective: parseBudget(parsed.budgetObjective),
+      supplierEvaluations
+    };
+
+    const hasContent =
+      Boolean(additionalEvaluation.awardCriteria) ||
+      Boolean(additionalEvaluation.awardResponsible) ||
+      Boolean(additionalEvaluation.buyerResponsible) ||
+      Boolean(additionalEvaluation.urgency) ||
+      typeof additionalEvaluation.budgetObjective === "number" ||
+      supplierEvaluations.length > 0;
+
+    return hasContent ? additionalEvaluation : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+async function createJobWithFolio(originalFileCount: number) {
+  const year = new Date().getFullYear();
+
+  return prisma.$transaction(async (tx) => {
+    const sequence = await tx.comparisonSequence.upsert({
+      where: { year },
+      update: { current: { increment: 1 } },
+      create: { year, current: 1 }
+    });
+
+    const folio = `TC-MD-${year}-${String(sequence.current).padStart(6, "0")}`;
+    const job = await tx.processingJob.create({
+      data: {
+        folio,
+        status: "processing",
+        templateFilename: "template.xlsx",
+        originalFileCount,
+        warningsJson: "[]"
+      }
+    });
+
+    return { job, folio };
+  });
+}
+
 export async function POST(request: Request) {
   let jobId: string | undefined;
+  let folio: string | undefined;
   const warnings: string[] = [];
   const diagnostics: DocumentDiagnostic[] = [];
 
@@ -155,13 +258,19 @@ export async function POST(request: Request) {
     const formData = await request.formData();
     const quotes = formData.getAll("quotes").filter((file): file is File => file instanceof File);
     const exchangeRateRequest = readExchangeRateRequest(formData);
+    const additionalEvaluation = readAdditionalEvaluationData(formData);
 
     if (
       exchangeRateRequest.exchangeRateMode === "manual" &&
       !parseExchangeRateValue(exchangeRateRequest.manualExchangeRateClpPerUsd)
     ) {
       return NextResponse.json(
-        { status: "error", message: "Tipo de cambio manual invalido.", warnings, documentDiagnostics: diagnostics },
+        {
+          status: "error",
+          message: "Tipo de cambio manual invalido.",
+          warnings,
+          documentDiagnostics: diagnostics
+        },
         { status: 400 }
       );
     }
@@ -186,14 +295,24 @@ export async function POST(request: Request) {
 
     if (quotes.length === 0) {
       return NextResponse.json(
-        { status: "error", message: "Debes subir al menos una cotizacion PDF.", warnings, documentDiagnostics: diagnostics },
+        {
+          status: "error",
+          message: "Debes subir al menos una cotizacion PDF.",
+          warnings,
+          documentDiagnostics: diagnostics
+        },
         { status: 400 }
       );
     }
 
     if (quotes.length > MAX_PDFS) {
       return NextResponse.json(
-        { status: "error", message: `Maximo permitido: ${MAX_PDFS} PDFs.`, warnings, documentDiagnostics: diagnostics },
+        {
+          status: "error",
+          message: `Maximo permitido: ${MAX_PDFS} PDFs.`,
+          warnings,
+          documentDiagnostics: diagnostics
+        },
         { status: 400 }
       );
     }
@@ -201,7 +320,12 @@ export async function POST(request: Request) {
     for (const quote of quotes) {
       if (!isPdf(quote)) {
         return NextResponse.json(
-          { status: "error", message: `El archivo ${quote.name} no es PDF.`, warnings, documentDiagnostics: diagnostics },
+          {
+            status: "error",
+            message: `El archivo ${quote.name} no es PDF.`,
+            warnings,
+            documentDiagnostics: diagnostics
+          },
           { status: 400 }
         );
       }
@@ -218,17 +342,10 @@ export async function POST(request: Request) {
       }
     }
 
-    const job = await prisma.processingJob.create({
-      data: {
-        status: "processing",
-        templateFilename: "template.xlsx",
-        originalFileCount: quotes.length,
-        warningsJson: "[]"
-      }
-    });
-
-    jobId = job.id;
-    const activeJobId = job.id;
+    const created = await createJobWithFolio(quotes.length);
+    jobId = created.job.id;
+    folio = created.folio;
+    const activeJobId = created.job.id;
     await ensureJobDirectories(activeJobId);
 
     const templatePath = path.join(jobUploadDir(activeJobId), "template.xlsx");
@@ -279,6 +396,14 @@ export async function POST(request: Request) {
         }
 
         parsedQuotes.push(parsed);
+        diagnostics.push({
+          filename: quoteFile.name,
+          typeDetected: "Cotizacion",
+          status: "processed",
+          reason: "Cotizacion valida procesada correctamente.",
+          missing: [],
+          action: "Sin accion requerida."
+        });
 
         await prisma.uploadedQuote.update({
           where: { id: uploadedQuote.id },
@@ -349,6 +474,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           jobId: activeJobId,
+          folio,
           status: "error",
           message:
             "Los archivos enviados no corresponden a cotizaciones de proveedores o no contienen una tabla reconocible de productos, cantidades, precios y moneda.",
@@ -361,7 +487,10 @@ export async function POST(request: Request) {
     }
 
     const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest);
-    const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId);
+    const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId, {
+      folio,
+      additionalEvaluation
+    });
     const allWarnings = userFacingWarnings([...new Set([...warnings, ...generated.warnings])]);
     const analytics = buildPurchaseAnalytics(consolidated, allWarnings.length);
 
@@ -404,12 +533,14 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       jobId: activeJobId,
+      folio,
       status: "completed",
       suppliers: consolidated.suppliers.map((supplier) => supplier.name),
       itemsDetected: consolidated.comparison.length,
       warnings: allWarnings,
       downloadUrl: `/api/download/${activeJobId}`,
       analytics,
+      budgetObjective: additionalEvaluation?.budgetObjective ?? null,
       documentDiagnostics: diagnostics
     });
   } catch (error) {
@@ -427,6 +558,7 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         jobId,
+        folio,
         status: "error",
         message: "Ocurrio un problema al procesar los archivos. Intenta nuevamente con cotizaciones legibles.",
         technicalMessage: message,

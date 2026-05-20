@@ -12,6 +12,7 @@ type DocumentDiagnostic = {
 
 export type ProcessResult = {
   jobId?: string;
+  folio?: string;
   status: "completed" | "error";
   suppliers?: string[];
   itemsDetected?: number;
@@ -20,6 +21,7 @@ export type ProcessResult = {
   message?: string;
   title?: string;
   analytics?: PurchaseAnalytics;
+  budgetObjective?: number | null;
   documentDiagnostics?: DocumentDiagnostic[];
 };
 
@@ -40,6 +42,9 @@ export function ProcessingSummary({ result }: Props) {
           {result.message ??
             "Los archivos enviados no corresponden a cotizaciones de proveedores o no contienen una tabla reconocible de productos, cantidades, precios y moneda."}
         </p>
+        {result.folio && (
+          <p className="mt-2 text-xs font-semibold text-rose-100">Folio: {result.folio}</p>
+        )}
         {omittedDocs.length > 0 && (
           <div className="mt-5 space-y-3">
             {omittedDocs.map((doc) => (
@@ -80,6 +85,16 @@ export function ProcessingSummary({ result }: Props) {
                 </ul>
               </div>
             </div>
+            <div className="rounded-lg border border-rose-200/20 bg-slate-950/45 p-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.08em] text-rose-100">
+                Ejemplo de documento valido
+              </p>
+              <p className="mt-2 text-xs text-rose-100">Proveedor: Echave Turri</p>
+              <p className="text-xs text-rose-100">Producto: Notebook Dell Pro 14</p>
+              <p className="text-xs text-rose-100">Cantidad: 12</p>
+              <p className="text-xs text-rose-100">Precio unitario: US$ 1,156.00</p>
+              <p className="text-xs text-rose-100">Total: US$ 13,872.00</p>
+            </div>
           </div>
         )}
         {result.warnings.length > 0 && (
@@ -104,6 +119,7 @@ export function ProcessingSummary({ result }: Props) {
         <div>
           <h2 className="text-2xl font-semibold">Tabla comparativa lista</h2>
           <p className="mt-2 text-sm text-slate-300">El Excel fue generado correctamente.</p>
+          {result.folio && <p className="mt-2 text-xs font-semibold text-cyan-100">Folio: {result.folio}</p>}
         </div>
         <DownloadButton downloadUrl={result.downloadUrl} />
       </div>

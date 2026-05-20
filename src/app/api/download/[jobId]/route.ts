@@ -19,11 +19,13 @@ export async function GET(_request: Request, context: RouteContext) {
   }
 
   const file = await readFile(job.outputExcelPath ?? outputExcelPath(jobId));
+  const safeFolio = job.folio ? job.folio.replace(/[^\w\-]/g, "_") : null;
+  const filename = safeFolio ? `tabla-comparativa-${safeFolio}.xlsx` : "tabla-comparativa.xlsx";
 
   return new NextResponse(file, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": 'attachment; filename="tabla-comparativa.xlsx"',
+      "Content-Disposition": `attachment; filename="${filename}"`,
       "Cache-Control": "no-store"
     }
   });

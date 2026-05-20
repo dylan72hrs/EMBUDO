@@ -45,6 +45,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
   return NextResponse.json({
     id: job.id,
+    folio: job.folio,
     status: job.status,
     templateFilename: job.templateFilename,
     originalFileCount: job.originalFileCount,

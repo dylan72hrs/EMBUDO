@@ -49,7 +49,15 @@ export const TEMPLATE_MAP = {
     purchase: 29,
     credit: 31,
     paymentCondition: 32,
-    deliveryTime: 33
+    deliveryTime: 33,
+    urgency: 34,
+    associatedCosts: 35,
+    awardCriteria: 37,
+    awardResponsible: 39,
+    buyerResponsible: 40
+  },
+  cells: {
+    folio: "A5"
   }
 } as const;
 

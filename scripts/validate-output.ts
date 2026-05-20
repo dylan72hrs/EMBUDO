@@ -14,6 +14,14 @@ const marginArg = args.find((arg) => arg.startsWith("--margin="));
 const exchangeRateMargin = marginArg ? Number(marginArg.split("=")[1]) : undefined;
 const sourceUsdArg = args.find((arg) => arg.startsWith("--source-usd="));
 const sourceUsd = sourceUsdArg ? Number(sourceUsdArg.split("=")[1]) : 33;
+const expectedFolioArg = args.find((arg) => arg.startsWith("--expected-folio="));
+const expectedFolio = expectedFolioArg?.split("=")[1];
+const expectedAwardCriteriaArg = args.find((arg) => arg.startsWith("--expected-award-criteria="));
+const expectedAwardCriteria = expectedAwardCriteriaArg?.split("=")[1];
+const expectedAwardResponsibleArg = args.find((arg) => arg.startsWith("--expected-award-responsible="));
+const expectedAwardResponsible = expectedAwardResponsibleArg?.split("=")[1];
+const expectedBuyerArg = args.find((arg) => arg.startsWith("--expected-buyer="));
+const expectedBuyer = expectedBuyerArg?.split("=")[1];
 
 const forbiddenProductTerms: Array<{ label: string; pattern: RegExp }> = [
   { label: "Los Leones", pattern: /los leones/i },
@@ -242,6 +250,50 @@ function validateLineTotalsAndPurchaseTotals(outputSheet: ExcelJS.Worksheet, sup
   }
 }
 
+function validateManualEvaluationFields(outputSheet: ExcelJS.Worksheet) {
+  const dynamicCells = [
+    outputSheet.getCell("A5"),
+    outputSheet.getCell(TEMPLATE_MAP.rows.awardCriteria, 3),
+    outputSheet.getCell(TEMPLATE_MAP.rows.awardResponsible, 3),
+    outputSheet.getCell(TEMPLATE_MAP.rows.buyerResponsible, 3)
+  ];
+
+  for (const cell of dynamicCells) {
+    const text = cellText(cell.value);
+    if (/undefined|null/i.test(text)) {
+      fail(`Celda ${cell.address} contiene texto invalido (undefined/null).`);
+    }
+  }
+
+  if (expectedFolio) {
+    const folioText = cellText(outputSheet.getCell("A5").value);
+    if (!folioText.includes(expectedFolio)) {
+      fail(`No se encontro el folio esperado ${expectedFolio} en A5.`);
+    }
+  }
+
+  if (expectedAwardCriteria) {
+    const value = cellText(outputSheet.getCell(TEMPLATE_MAP.rows.awardCriteria, 3).value);
+    if (!value.includes(expectedAwardCriteria)) {
+      fail(`No se encontro criterio de adjudicacion esperado en fila ${TEMPLATE_MAP.rows.awardCriteria}.`);
+    }
+  }
+
+  if (expectedAwardResponsible) {
+    const value = cellText(outputSheet.getCell(TEMPLATE_MAP.rows.awardResponsible, 3).value);
+    if (!value.includes(expectedAwardResponsible)) {
+      fail(`No se encontro responsable de adjudicacion esperado en fila ${TEMPLATE_MAP.rows.awardResponsible}.`);
+    }
+  }
+
+  if (expectedBuyer) {
+    const value = cellText(outputSheet.getCell(TEMPLATE_MAP.rows.buyerResponsible, 3).value);
+    if (!value.includes(expectedBuyer)) {
+      fail(`No se encontro comprador responsable esperado en fila ${TEMPLATE_MAP.rows.buyerResponsible}.`);
+    }
+  }
+}
+
 async function main() {
   if (!outputPath) {
     fail(
@@ -325,6 +377,7 @@ async function main() {
   if (supplierNames.every((name) => !name)) fail("No hay proveedores escritos en los bloques de columnas.");
   validateNoResidualDynamicPrices(outputSheet, supplierNames);
   validateLineTotalsAndPurchaseTotals(outputSheet, supplierNames);
+  validateManualEvaluationFields(outputSheet);
 
   if (expectedCurrency) {
     const numericPriceValues: number[] = [];

@@ -61,18 +61,38 @@ function clearSupplierDynamicRows(worksheet: ExcelJS.Worksheet) {
     TEMPLATE_MAP.rows.credit,
     TEMPLATE_MAP.rows.paymentCondition,
     TEMPLATE_MAP.rows.deliveryTime,
-    34,
-    35
+    TEMPLATE_MAP.rows.urgency,
+    TEMPLATE_MAP.rows.associatedCosts
   ];
 
   for (const row of rowsToClear) {
-    clearRangeValues(worksheet, row, row, TEMPLATE_MAP.supplierBlocks[0].unitPriceColumn, LAST_DYNAMIC_COLUMN);
+    clearRangeValues(
+      worksheet,
+      row,
+      row,
+      TEMPLATE_MAP.supplierBlocks[0].unitPriceColumn,
+      LAST_DYNAMIC_COLUMN
+    );
   }
 }
 
 function clearLowerDynamicSections(worksheet: ExcelJS.Worksheet) {
-  worksheet.getCell("A37").value = "CRITERIO DE ADJUDICACIÓN:";
-  clearRangeValues(worksheet, 39, 40, 3, LAST_DYNAMIC_COLUMN);
+  worksheet.getCell("A37").value = "CRITERIO DE ADJUDICACION:";
+  clearRangeValues(
+    worksheet,
+    TEMPLATE_MAP.rows.awardCriteria,
+    TEMPLATE_MAP.rows.awardCriteria,
+    3,
+    LAST_DYNAMIC_COLUMN
+  );
+  clearRangeValues(
+    worksheet,
+    TEMPLATE_MAP.rows.awardResponsible,
+    TEMPLATE_MAP.rows.buyerResponsible,
+    3,
+    LAST_DYNAMIC_COLUMN
+  );
+  clearValue(worksheet.getCell(TEMPLATE_MAP.cells.folio));
 
   const lastRow = Math.max(worksheet.rowCount, LOWER_COMPARISON_START_ROW);
   clearRangeValues(worksheet, LOWER_COMPARISON_START_ROW, lastRow, FIRST_DYNAMIC_COLUMN, LAST_DYNAMIC_COLUMN);

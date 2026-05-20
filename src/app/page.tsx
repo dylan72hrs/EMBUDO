@@ -22,6 +22,32 @@ const EXCHANGE_RATE_SOURCE_URL =
 
 type Screen = "upload" | "confirm" | "processing" | "success" | "error";
 type ExchangeRateMode = "auto" | "manual";
+type UrgencyOption = "No informado" | "Baja" | "Media" | "Alta" | "Critica";
+
+type ProviderEvaluationFormRow = {
+  id: string;
+  supplierName: string;
+  paymentCondition: string;
+  deliveryTime: string;
+  availability: string;
+  associatedCosts: string;
+  creditStatus: "No informado" | "Si" | "No" | "Por validar";
+  providerEvaluation:
+    | "No informado"
+    | "Proveedor habitual"
+    | "Proveedor nuevo"
+    | "Por validar en SII"
+    | "No recomendado";
+};
+
+type AdditionalEvaluationForm = {
+  awardCriteria: string;
+  awardResponsible: string;
+  buyerResponsible: string;
+  urgency: UrgencyOption;
+  budgetObjective: string;
+  supplierEvaluations: ProviderEvaluationFormRow[];
+};
 type ExchangeRateInfo = {
   status?: string;
   baseRate?: number;
@@ -44,6 +70,41 @@ function formatRate(value?: number) {
   }).format(value);
 }
 
+function createProviderEvaluationRow(): ProviderEvaluationFormRow {
+  return {
+    id: crypto.randomUUID(),
+    supplierName: "",
+    paymentCondition: "",
+    deliveryTime: "",
+    availability: "",
+    associatedCosts: "",
+    creditStatus: "No informado",
+    providerEvaluation: "No informado"
+  };
+}
+
+function hasAnyAdditionalData(data: AdditionalEvaluationForm) {
+  if (
+    data.awardCriteria.trim() ||
+    data.awardResponsible.trim() ||
+    data.buyerResponsible.trim() ||
+    data.budgetObjective.trim() ||
+    data.urgency !== "No informado"
+  ) {
+    return true;
+  }
+
+  return data.supplierEvaluations.some((row) =>
+    [
+      row.supplierName,
+      row.paymentCondition,
+      row.deliveryTime,
+      row.availability,
+      row.associatedCosts
+    ].some((value) => value.trim().length > 0) || row.creditStatus !== "No informado" || row.providerEvaluation !== "No informado"
+  );
+}
+
 export default function Home() {
   const [quotes, setQuotes] = useState<File[]>([]);
   const [screen, setScreen] = useState<Screen>("upload");
@@ -54,6 +115,15 @@ export default function Home() {
   const [exchangeRateError, setExchangeRateError] = useState("");
   const [exchangeRateInfo, setExchangeRateInfo] = useState<ExchangeRateInfo | null>(null);
   const [exchangeRateLoading, setExchangeRateLoading] = useState(false);
+  const [showAdditionalEvaluation, setShowAdditionalEvaluation] = useState(false);
+  const [additionalEvaluation, setAdditionalEvaluation] = useState<AdditionalEvaluationForm>({
+    awardCriteria: "",
+    awardResponsible: "",
+    buyerResponsible: "",
+    urgency: "No informado",
+    budgetObjective: "",
+    supplierEvaluations: [createProviderEvaluationRow()]
+  });
 
   const progress = useMemo(() => {
     if (screen === "success") return 100;
@@ -126,7 +196,53 @@ export default function Home() {
     setExchangeRateMode("auto");
     setManualExchangeRate("");
     setExchangeRateError("");
+    setShowAdditionalEvaluation(false);
+    setAdditionalEvaluation({
+      awardCriteria: "",
+      awardResponsible: "",
+      buyerResponsible: "",
+      urgency: "No informado",
+      budgetObjective: "",
+      supplierEvaluations: [createProviderEvaluationRow()]
+    });
     setScreen("upload");
+  }
+
+  function updateAdditionalEvaluationField<K extends keyof AdditionalEvaluationForm>(
+    key: K,
+    value: AdditionalEvaluationForm[K]
+  ) {
+    setAdditionalEvaluation((current) => ({ ...current, [key]: value }));
+  }
+
+  function updateProviderEvaluationRow(
+    rowId: string,
+    key: keyof ProviderEvaluationFormRow,
+    value: ProviderEvaluationFormRow[keyof ProviderEvaluationFormRow]
+  ) {
+    setAdditionalEvaluation((current) => ({
+      ...current,
+      supplierEvaluations: current.supplierEvaluations.map((row) =>
+        row.id === rowId ? { ...row, [key]: value } : row
+      )
+    }));
+  }
+
+  function addProviderEvaluationRow() {
+    setAdditionalEvaluation((current) => ({
+      ...current,
+      supplierEvaluations: [...current.supplierEvaluations, createProviderEvaluationRow()]
+    }));
+  }
+
+  function removeProviderEvaluationRow(rowId: string) {
+    setAdditionalEvaluation((current) => {
+      const next = current.supplierEvaluations.filter((row) => row.id !== rowId);
+      return {
+        ...current,
+        supplierEvaluations: next.length > 0 ? next : [createProviderEvaluationRow()]
+      };
+    });
   }
 
   function validateExchangeRateChoice() {
@@ -178,6 +294,9 @@ export default function Home() {
       formData.append("exchangeRateMode", exchangeRateMode);
       if (exchangeRateMode === "manual") {
         formData.append("manualExchangeRateClpPerUsd", manualExchangeRate);
+      }
+      if (hasAnyAdditionalData(additionalEvaluation)) {
+        formData.append("additionalEvaluationData", JSON.stringify(additionalEvaluation));
       }
 
       const response = await fetch("/api/process", {
@@ -352,6 +471,193 @@ export default function Home() {
                 <PdfUploader files={quotes} onFiles={setQuotes} onRemove={removeFile} />
               </div>
 
+              <section className="mt-4 rounded-2xl border border-white/15 bg-slate-950/30 p-3.5">
+                <button
+                  type="button"
+                  onClick={() => setShowAdditionalEvaluation((current) => !current)}
+                  className="flex w-full items-center justify-between text-left"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-white">Datos adicionales de evaluacion</p>
+                    <p className="mt-1 text-xs text-white/75">
+                      Completa solo si deseas que estos datos aparezcan en la tabla comparativa final.
+                    </p>
+                  </div>
+                  <span className="text-xs font-semibold text-cyan-200">
+                    {showAdditionalEvaluation ? "Ocultar" : "Completar"}
+                  </span>
+                </button>
+
+                {showAdditionalEvaluation && (
+                  <div className="mt-4 space-y-4">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-xs text-white/85">
+                        Responsable de la adjudicacion
+                        <input
+                          value={additionalEvaluation.awardResponsible}
+                          onChange={(event) =>
+                            updateAdditionalEvaluationField("awardResponsible", event.target.value)
+                          }
+                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                          placeholder="Ej: Manuel / Logistica"
+                        />
+                      </label>
+                      <label className="text-xs text-white/85">
+                        Comprador responsable
+                        <input
+                          value={additionalEvaluation.buyerResponsible}
+                          onChange={(event) =>
+                            updateAdditionalEvaluationField("buyerResponsible", event.target.value)
+                          }
+                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                          placeholder="Ej: Nombre del comprador"
+                        />
+                      </label>
+                      <label className="text-xs text-white/85">
+                        Grado de urgencia
+                        <select
+                          value={additionalEvaluation.urgency}
+                          onChange={(event) =>
+                            updateAdditionalEvaluationField("urgency", event.target.value as UrgencyOption)
+                          }
+                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                        >
+                          <option>No informado</option>
+                          <option>Baja</option>
+                          <option>Media</option>
+                          <option>Alta</option>
+                          <option>Critica</option>
+                        </select>
+                      </label>
+                      <label className="text-xs text-white/85">
+                        Presupuesto objetivo / referencia
+                        <input
+                          value={additionalEvaluation.budgetObjective}
+                          onChange={(event) =>
+                            updateAdditionalEvaluationField("budgetObjective", event.target.value)
+                          }
+                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                          placeholder="Ej: 15000000"
+                          inputMode="decimal"
+                        />
+                      </label>
+                    </div>
+
+                    <label className="block text-xs text-white/85">
+                      Criterio de adjudicacion
+                      <textarea
+                        value={additionalEvaluation.awardCriteria}
+                        onChange={(event) => updateAdditionalEvaluationField("awardCriteria", event.target.value)}
+                        className="mt-1 min-h-20 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 py-2 text-sm text-white outline-none focus:border-cyan-300"
+                        placeholder="Ej: Se adjudica por mejor precio, disponibilidad inmediata y cumplimiento tecnico."
+                      />
+                    </label>
+
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold uppercase tracking-[0.08em] text-white/85">
+                          Variables por proveedor
+                        </p>
+                        <button
+                          type="button"
+                          onClick={addProviderEvaluationRow}
+                          className="h-8 rounded-lg border border-cyan-200/45 bg-cyan-400/20 px-3 text-xs font-semibold text-cyan-100"
+                        >
+                          Agregar proveedor
+                        </button>
+                      </div>
+
+                      {additionalEvaluation.supplierEvaluations.map((row) => (
+                        <article key={row.id} className="rounded-lg border border-white/15 bg-slate-900/55 p-3">
+                          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                            <input
+                              value={row.supplierName}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(row.id, "supplierName", event.target.value)
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300"
+                              placeholder="Proveedor (Ej: ADIS)"
+                            />
+                            <input
+                              value={row.paymentCondition}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(row.id, "paymentCondition", event.target.value)
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300"
+                              placeholder="Condicion de pago"
+                            />
+                            <input
+                              value={row.deliveryTime}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(row.id, "deliveryTime", event.target.value)
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300"
+                              placeholder="Plazo de entrega"
+                            />
+                            <input
+                              value={row.availability}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(row.id, "availability", event.target.value)
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300"
+                              placeholder="Disponibilidad"
+                            />
+                            <input
+                              value={row.associatedCosts}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(row.id, "associatedCosts", event.target.value)
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300"
+                              placeholder="Costos asociados"
+                            />
+                            <select
+                              value={row.creditStatus}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(
+                                  row.id,
+                                  "creditStatus",
+                                  event.target.value as ProviderEvaluationFormRow["creditStatus"]
+                                )
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300"
+                            >
+                              <option>No informado</option>
+                              <option>Si</option>
+                              <option>No</option>
+                              <option>Por validar</option>
+                            </select>
+                            <select
+                              value={row.providerEvaluation}
+                              onChange={(event) =>
+                                updateProviderEvaluationRow(
+                                  row.id,
+                                  "providerEvaluation",
+                                  event.target.value as ProviderEvaluationFormRow["providerEvaluation"]
+                                )
+                              }
+                              className="h-9 rounded-lg border border-white/20 bg-slate-900/70 px-3 text-xs text-white outline-none focus:border-cyan-300 sm:col-span-2 lg:col-span-2"
+                            >
+                              <option>No informado</option>
+                              <option>Proveedor habitual</option>
+                              <option>Proveedor nuevo</option>
+                              <option>Por validar en SII</option>
+                              <option>No recomendado</option>
+                            </select>
+                            <button
+                              type="button"
+                              onClick={() => removeProviderEvaluationRow(row.id)}
+                              className="h-9 rounded-lg border border-rose-300/40 bg-rose-900/30 px-3 text-xs font-semibold text-rose-100"
+                            >
+                              Quitar
+                            </button>
+                          </div>
+                        </article>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+
               <button
                 type="button"
                 disabled={!canSubmit}
@@ -424,7 +730,12 @@ export default function Home() {
         {screen === "success" && (
           <div className="relative mx-auto mt-4 w-full max-w-4xl space-y-4 pb-10">
             <ProcessingSummary result={result} />
-            {result?.analytics && <PurchaseAnalyticsDashboard analytics={result.analytics} />}
+            {result?.analytics && (
+              <PurchaseAnalyticsDashboard
+                analytics={result.analytics}
+                budgetObjective={result.budgetObjective}
+              />
+            )}
             <button
               type="button"
               onClick={resetFlow}

@@ -11,6 +11,30 @@ type GenerateResult = {
   warnings: string[];
 };
 
+export type SupplierEvaluationInput = {
+  supplierName: string;
+  paymentCondition?: string;
+  deliveryTime?: string;
+  availability?: string;
+  associatedCosts?: string;
+  creditStatus?: string;
+  providerEvaluation?: string;
+};
+
+export type AdditionalEvaluationData = {
+  awardCriteria?: string;
+  awardResponsible?: string;
+  buyerResponsible?: string;
+  urgency?: string;
+  budgetObjective?: number | null;
+  supplierEvaluations: SupplierEvaluationInput[];
+};
+
+export type GenerateComparisonExcelOptions = {
+  folio?: string;
+  additionalEvaluation?: AdditionalEvaluationData;
+};
+
 function hasFormula(cell: ExcelJS.Cell) {
   const value = cell.value;
   return Boolean(
@@ -56,6 +80,21 @@ function applyCurrencyFormat(cell: ExcelJS.Cell, currency: Currency) {
   cell.numFmt = "General";
 }
 
+function normalizeText(value?: string) {
+  if (!value) return "";
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[.\-_/]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function hasText(value?: string | null) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
 function applyBlockBorders(worksheet: ExcelJS.Worksheet) {
   const mediumSide: Partial<ExcelJS.Border> = { style: "medium", color: { argb: "FF000000" } };
 
@@ -72,7 +111,7 @@ function applyBlockBorders(worksheet: ExcelJS.Worksheet) {
       };
     }
 
-    for (let row = TEMPLATE_MAP.headerRows.supplierName; row <= TEMPLATE_MAP.rows.deliveryTime; row += 1) {
+    for (let row = TEMPLATE_MAP.headerRows.supplierName; row <= TEMPLATE_MAP.rows.associatedCosts; row += 1) {
       const leftCell = worksheet.getCell(row, block.unitPriceColumn);
       const rightCell = worksheet.getCell(row, block.totalColumn);
 
@@ -176,10 +215,129 @@ function writePurchaseTotals(
   }
 }
 
+function matchSupplierEvaluation(
+  supplierName: string,
+  supplierEvaluations: SupplierEvaluationInput[]
+): SupplierEvaluationInput | undefined {
+  const normalizedSupplier = normalizeText(supplierName);
+  let best: { score: number; value: SupplierEvaluationInput } | undefined;
+
+  for (const evaluation of supplierEvaluations) {
+    const normalizedCandidate = normalizeText(evaluation.supplierName);
+    if (!normalizedCandidate) continue;
+
+    let score = 0;
+    if (normalizedSupplier === normalizedCandidate) score = 100;
+    else if (normalizedSupplier.includes(normalizedCandidate) || normalizedCandidate.includes(normalizedSupplier)) {
+      score = 70;
+    } else {
+      const supplierTokens = normalizedSupplier.split(" ");
+      const candidateTokens = normalizedCandidate.split(" ");
+      const overlap = supplierTokens.filter((token) => candidateTokens.includes(token)).length;
+      score = overlap * 20;
+    }
+
+    if (!best || score > best.score) {
+      best = { score, value: evaluation };
+    }
+  }
+
+  return best && best.score >= 40 ? best.value : undefined;
+}
+
+function compactAssociatedData(supplierEvaluation?: SupplierEvaluationInput) {
+  if (!supplierEvaluation) return undefined;
+  const parts: string[] = [];
+  if (hasText(supplierEvaluation.associatedCosts)) parts.push(`Costos: ${supplierEvaluation.associatedCosts?.trim()}`);
+  if (hasText(supplierEvaluation.availability)) parts.push(`Disponibilidad: ${supplierEvaluation.availability?.trim()}`);
+  if (hasText(supplierEvaluation.providerEvaluation)) {
+    parts.push(`Evaluacion proveedor: ${supplierEvaluation.providerEvaluation?.trim()}`);
+  }
+  return parts.length > 0 ? parts.join(" | ") : undefined;
+}
+
+function writeAdditionalEvaluationData(
+  worksheet: ExcelJS.Worksheet,
+  suppliersToWrite: ConsolidatedComparison["suppliers"],
+  additionalEvaluation: AdditionalEvaluationData | undefined
+) {
+  if (!additionalEvaluation) return;
+
+  const supplierEvaluations = additionalEvaluation.supplierEvaluations ?? [];
+  const urgency = hasText(additionalEvaluation.urgency) ? additionalEvaluation.urgency?.trim() : undefined;
+
+  for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
+    const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
+    const supplierEvaluation = matchSupplierEvaluation(supplier.name, supplierEvaluations);
+    const associatedText = compactAssociatedData(supplierEvaluation);
+
+    if (hasText(supplierEvaluation?.creditStatus)) {
+      writeIfNotFormula(
+        worksheet.getCell(TEMPLATE_MAP.rows.credit, block.unitPriceColumn),
+        supplierEvaluation?.creditStatus?.trim() ?? null
+      );
+    }
+
+    if (hasText(supplierEvaluation?.paymentCondition)) {
+      writeIfNotFormula(
+        worksheet.getCell(TEMPLATE_MAP.rows.paymentCondition, block.unitPriceColumn),
+        supplierEvaluation?.paymentCondition?.trim() ?? null
+      );
+    }
+
+    if (hasText(supplierEvaluation?.deliveryTime)) {
+      writeIfNotFormula(
+        worksheet.getCell(TEMPLATE_MAP.rows.deliveryTime, block.unitPriceColumn),
+        supplierEvaluation?.deliveryTime?.trim() ?? null
+      );
+    }
+
+    if (urgency) {
+      writeIfNotFormula(worksheet.getCell(TEMPLATE_MAP.rows.urgency, block.unitPriceColumn), urgency);
+    }
+
+    if (associatedText) {
+      writeIfNotFormula(worksheet.getCell(TEMPLATE_MAP.rows.associatedCosts, block.unitPriceColumn), associatedText);
+    }
+  }
+
+  if (hasText(additionalEvaluation.awardCriteria)) {
+    const criteriaCell = worksheet.getCell(TEMPLATE_MAP.rows.awardCriteria, 3);
+    const criteriaParts = [additionalEvaluation.awardCriteria?.trim()];
+    if (typeof additionalEvaluation.budgetObjective === "number" && Number.isFinite(additionalEvaluation.budgetObjective)) {
+      const formattedBudget = new Intl.NumberFormat("es-CL", {
+        style: "currency",
+        currency: "CLP",
+        minimumFractionDigits: 0,
+        maximumFractionDigits: 0
+      }).format(additionalEvaluation.budgetObjective);
+      criteriaParts.push(`Presupuesto objetivo: ${formattedBudget}`);
+    }
+    writeDynamicCell(criteriaCell, criteriaParts.filter(Boolean).join(" | "));
+    cloneCellStyle(criteriaCell);
+    criteriaCell.alignment = { ...criteriaCell.alignment, wrapText: true, vertical: "middle" };
+  }
+
+  if (hasText(additionalEvaluation.awardResponsible)) {
+    writeDynamicCell(
+      worksheet.getCell(TEMPLATE_MAP.rows.awardResponsible, 3),
+      additionalEvaluation.awardResponsible?.trim() ?? null
+    );
+  }
+
+  if (hasText(additionalEvaluation.buyerResponsible)) {
+    writeDynamicCell(
+      worksheet.getCell(TEMPLATE_MAP.rows.buyerResponsible, 3),
+      additionalEvaluation.buyerResponsible?.trim() ?? null
+    );
+  }
+}
+
 export async function generateComparisonExcel(
   templatePath: string,
   data: ConsolidatedComparison,
-  jobId: string
+  jobId: string,
+  options: GenerateComparisonExcelOptions = {}
 ): Promise<GenerateResult> {
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(templatePath);
@@ -209,13 +367,18 @@ export async function generateComparisonExcel(
   clearTemplateDynamicFields(worksheet);
   applyBlockBorders(worksheet);
 
+  if (hasText(options.folio)) {
+    const folioCell = worksheet.getCell(TEMPLATE_MAP.cells.folio);
+    writeDynamicCell(folioCell, `Folio comparativa: ${options.folio?.trim()}`);
+    cloneCellStyle(folioCell);
+    folioCell.font = { ...(folioCell.font ?? {}), bold: true, size: 9 };
+    folioCell.alignment = { ...(folioCell.alignment ?? {}), horizontal: "left", vertical: "middle" };
+  }
+
   for (const [index, supplier] of suppliersToWrite.entries()) {
     const block = TEMPLATE_MAP.supplierBlocks[index];
     worksheet.getCell(block.supplierNameCell).value = supplier.name;
-    writeIfNotFormula(
-      worksheet.getCell(TEMPLATE_MAP.rows.credit, block.unitPriceColumn),
-      supplier.credit ?? null
-    );
+    writeIfNotFormula(worksheet.getCell(TEMPLATE_MAP.rows.credit, block.unitPriceColumn), supplier.credit ?? null);
     writeIfNotFormula(
       worksheet.getCell(TEMPLATE_MAP.rows.paymentCondition, block.unitPriceColumn),
       supplier.paymentCondition ?? null
@@ -258,6 +421,8 @@ export async function generateComparisonExcel(
     }
   }
 
+  writeAdditionalEvaluationData(worksheet, suppliersToWrite, options.additionalEvaluation);
+
   for (const supplier of suppliersToWrite) {
     const currencies = new Set(
       itemsToWrite
@@ -266,7 +431,7 @@ export async function generateComparisonExcel(
     );
 
     if (currencies.size > 1) {
-      warnings.push(`Proveedor ${supplier.name} tiene monedas mixtas; total requiere revisiÃ³n.`);
+      warnings.push(`Proveedor ${supplier.name} tiene monedas mixtas; total requiere revision.`);
     }
   }
 

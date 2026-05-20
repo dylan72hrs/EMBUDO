@@ -9,6 +9,7 @@ datasource db {
 
 model ProcessingJob {
   id                String           @id @default(cuid())
+  folio             String?          @unique
   status            String
   createdAt         DateTime         @default(now())
   updatedAt         DateTime         @updatedAt
@@ -18,6 +19,11 @@ model ProcessingJob {
   warningsJson      String
   uploadedQuotes    UploadedQuote[]
   comparisonItems   ComparisonItem[]
+}
+
+model ComparisonSequence {
+  year    Int @id
+  current Int
 }
 
 model UploadedQuote {
