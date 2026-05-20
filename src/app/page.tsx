@@ -62,6 +62,9 @@ type ExchangeRateInfo = {
   sourceUrl?: string;
 };
 
+const LETTERS_ONLY_REGEX = /^[A-Za-zÁÉÍÓÚÜÑáéíóúüñ\s]*$/;
+const NUMBERS_ONLY_REGEX = /^\d*$/;
+
 function formatRate(value?: number) {
   if (value === undefined) return "No disponible";
   return new Intl.NumberFormat("es-CL", {
@@ -116,6 +119,8 @@ export default function Home() {
   const [exchangeRateInfo, setExchangeRateInfo] = useState<ExchangeRateInfo | null>(null);
   const [exchangeRateLoading, setExchangeRateLoading] = useState(false);
   const [showAdditionalEvaluation, setShowAdditionalEvaluation] = useState(false);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [fieldPulse, setFieldPulse] = useState<Record<string, boolean>>({});
   const [additionalEvaluation, setAdditionalEvaluation] = useState<AdditionalEvaluationForm>({
     awardCriteria: "",
     awardResponsible: "",
@@ -197,6 +202,8 @@ export default function Home() {
     setManualExchangeRate("");
     setExchangeRateError("");
     setShowAdditionalEvaluation(false);
+    setFieldErrors({});
+    setFieldPulse({});
     setAdditionalEvaluation({
       awardCriteria: "",
       awardResponsible: "",
@@ -217,6 +224,55 @@ export default function Home() {
     value: AdditionalEvaluationForm[K]
   ) {
     setAdditionalEvaluation((current) => ({ ...current, [key]: value }));
+  }
+
+  function triggerFieldError(fieldKey: string, message: string) {
+    setFieldErrors((current) => ({ ...current, [fieldKey]: message }));
+    setFieldPulse((current) => ({ ...current, [fieldKey]: false }));
+    requestAnimationFrame(() => {
+      setFieldPulse((current) => ({ ...current, [fieldKey]: true }));
+    });
+    window.setTimeout(() => {
+      setFieldPulse((current) => ({ ...current, [fieldKey]: false }));
+    }, 420);
+  }
+
+  function clearFieldError(fieldKey: string) {
+    setFieldErrors((current) => {
+      if (!current[fieldKey]) return current;
+      const next = { ...current };
+      delete next[fieldKey];
+      return next;
+    });
+    setFieldPulse((current) => ({ ...current, [fieldKey]: false }));
+  }
+
+  function lettersOnlyInputClass(fieldKey: string) {
+    const hasError = Boolean(fieldErrors[fieldKey]);
+    const pulse = Boolean(fieldPulse[fieldKey]);
+    return `${hasError ? "embudo-input-invalid" : ""} ${pulse ? "embudo-invalid-pulse" : ""}`.trim();
+  }
+
+  function handleLettersOnlyField<K extends "awardResponsible" | "buyerResponsible">(
+    key: K,
+    value: string
+  ) {
+    if (!LETTERS_ONLY_REGEX.test(value)) {
+      triggerFieldError(key, "Acá solamente se permiten letras");
+      return;
+    }
+    clearFieldError(key);
+    updateAdditionalEvaluationField(key, value);
+  }
+
+  function handleBudgetObjectiveChange(value: string) {
+    const sanitized = value.replace(/[^\d]/g, "");
+    if (!NUMBERS_ONLY_REGEX.test(value)) {
+      triggerFieldError("budgetObjective", "Acá solamente se permiten números");
+    } else {
+      clearFieldError("budgetObjective");
+    }
+    updateAdditionalEvaluationField("budgetObjective", sanitized);
   }
 
   function updateProviderEvaluationRow(
@@ -475,7 +531,11 @@ export default function Home() {
                 <PdfUploader files={quotes} onFiles={setQuotes} onRemove={removeFile} />
               </div>
 
-              <section className="mt-4 rounded-2xl border border-white/15 bg-slate-950/30 p-3.5">
+              <section
+                className={`mt-4 rounded-2xl border border-white/15 bg-slate-950/30 p-3.5 ${
+                  showAdditionalEvaluation ? "" : "embudo-collapsed-evaluation-glow"
+                }`}
+              >
                 <button
                   type="button"
                   onClick={() => setShowAdditionalEvaluation((current) => !current)}
@@ -500,22 +560,28 @@ export default function Home() {
                         <input
                           value={additionalEvaluation.awardResponsible}
                           onChange={(event) =>
-                            updateAdditionalEvaluationField("awardResponsible", event.target.value)
+                            handleLettersOnlyField("awardResponsible", event.target.value)
                           }
-                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                          className={`mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300 ${lettersOnlyInputClass("awardResponsible")}`}
                           placeholder="Ej: Manuel / Logistica"
                         />
+                        {fieldErrors.awardResponsible && (
+                          <p className="mt-1 text-[11px] text-rose-200">{fieldErrors.awardResponsible}</p>
+                        )}
                       </label>
                       <label className="text-xs text-white/85">
                         Comprador responsable
                         <input
                           value={additionalEvaluation.buyerResponsible}
                           onChange={(event) =>
-                            updateAdditionalEvaluationField("buyerResponsible", event.target.value)
+                            handleLettersOnlyField("buyerResponsible", event.target.value)
                           }
-                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                          className={`mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300 ${lettersOnlyInputClass("buyerResponsible")}`}
                           placeholder="Ej: Nombre del comprador"
                         />
+                        {fieldErrors.buyerResponsible && (
+                          <p className="mt-1 text-[11px] text-rose-200">{fieldErrors.buyerResponsible}</p>
+                        )}
                       </label>
                       <label className="text-xs text-white/85">
                         Grado de urgencia
@@ -537,13 +603,14 @@ export default function Home() {
                         Presupuesto objetivo / referencia
                         <input
                           value={additionalEvaluation.budgetObjective}
-                          onChange={(event) =>
-                            updateAdditionalEvaluationField("budgetObjective", event.target.value)
-                          }
-                          className="mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300"
+                          onChange={(event) => handleBudgetObjectiveChange(event.target.value)}
+                          className={`mt-1 h-9 w-full rounded-lg border border-white/20 bg-slate-900/70 px-3 text-sm text-white outline-none focus:border-cyan-300 ${lettersOnlyInputClass("budgetObjective")}`}
                           placeholder="Ej: 15000000"
-                          inputMode="decimal"
+                          inputMode="numeric"
                         />
+                        {fieldErrors.budgetObjective && (
+                          <p className="mt-1 text-[11px] text-rose-200">{fieldErrors.budgetObjective}</p>
+                        )}
                       </label>
                     </div>
 

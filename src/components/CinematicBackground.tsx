@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 export type BackgroundMode = "initial" | "processing" | "success";
 
@@ -11,7 +11,7 @@ type Props = {
 const PROCESSING_VIDEO_URL =
   "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4";
 const SUCCESS_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260511_230229_7c9bc431-46cf-489a-948d-e8144d8eb5d4.mp4";
+  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_065045_c44942da-53c6-4804-b734-f9e07fc22e08.mp4";
 const INITIAL_VIDEO_URL =
   "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_080021_d598092b-c4c2-4e53-8e46-94cf9064cd50.mp4";
 
@@ -24,6 +24,7 @@ function modeVideo(mode: BackgroundMode) {
 
 export function CinematicBackground({ mode }: Props) {
   const [videoFailed, setVideoFailed] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
 
   useEffect(() => {
     setVideoFailed(false);
@@ -31,18 +32,71 @@ export function CinematicBackground({ mode }: Props) {
 
   const videoUrl = useMemo(() => modeVideo(mode), [mode]);
 
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || !videoUrl || videoFailed) return;
+
+    let rafId: number | undefined;
+    let restartTimeoutId: number | undefined;
+    let fadingOut = false;
+
+    const fadeIn = () => {
+      video.style.transition = "opacity 0.5s ease";
+      video.style.opacity = "1";
+    };
+
+    const startPlayback = () => {
+      video.style.opacity = "0";
+      video.currentTime = 0;
+      void video.play().then(() => {
+        requestAnimationFrame(fadeIn);
+      });
+    };
+
+    const tick = () => {
+      const hasDuration = Number.isFinite(video.duration) && video.duration > 0;
+      if (hasDuration) {
+        const remaining = video.duration - video.currentTime;
+        if (remaining <= 0.5 && !fadingOut) {
+          fadingOut = true;
+          video.style.transition = "opacity 0.5s ease";
+          video.style.opacity = "0";
+        }
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+
+    const handleEnded = () => {
+      fadingOut = false;
+      video.style.opacity = "0";
+      restartTimeoutId = window.setTimeout(() => {
+        startPlayback();
+      }, 100);
+    };
+
+    video.addEventListener("ended", handleEnded);
+    startPlayback();
+    rafId = requestAnimationFrame(tick);
+
+    return () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      if (restartTimeoutId) window.clearTimeout(restartTimeoutId);
+      video.removeEventListener("ended", handleEnded);
+    };
+  }, [videoFailed, videoUrl]);
+
   return (
     <>
       <div className={`embudo-bg-base embudo-bg-${mode}`} aria-hidden />
 
       {videoUrl && !videoFailed && (
         <video
+          ref={videoRef}
           key={videoUrl}
           className={`embudo-bg-video ${mode === "processing" ? "embudo-bg-video-processing" : "embudo-bg-video-initial"}`}
           src={videoUrl}
           autoPlay
           muted
-          loop
           playsInline
           preload="auto"
           aria-hidden
@@ -50,6 +104,7 @@ export function CinematicBackground({ mode }: Props) {
         />
       )}
 
+      {mode === "success" && <div className="embudo-bg-success-hero-blur" aria-hidden />}
       <div className={`embudo-bg-overlay embudo-bg-overlay-${mode}`} aria-hidden />
       <div className={`embudo-bg-gradient embudo-bg-gradient-${mode}`} aria-hidden />
     </>

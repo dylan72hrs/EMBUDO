@@ -22,7 +22,9 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
-  filter: saturate(1.1) contrast(1.02) brightness(0.7);
+  filter: saturate(1.08) contrast(1.03) brightness(0.82);
+  opacity: 0;
+  transition: opacity 0.5s ease;
 }
 
 .embudo-bg-video-initial {
@@ -49,9 +51,7 @@ body {
 }
 
 .embudo-bg-success {
-  background:
-    radial-gradient(110% 120% at 78% 12%, rgba(97, 169, 255, 0.2), transparent 50%),
-    linear-gradient(180deg, #020610 0%, #040a14 100%);
+  background: linear-gradient(180deg, #030711 0%, #040a14 100%);
 }
 
 .embudo-bg-overlay {
@@ -68,7 +68,7 @@ body {
 }
 
 .embudo-bg-overlay-success {
-  background: linear-gradient(180deg, rgba(2, 7, 16, 0.24), rgba(2, 7, 16, 0.52));
+  background: linear-gradient(180deg, rgba(2, 7, 16, 0.14), rgba(2, 7, 16, 0.28));
 }
 
 .embudo-bg-gradient {
@@ -90,10 +90,21 @@ body {
 }
 
 .embudo-bg-gradient-success {
-  background:
-    radial-gradient(circle at 20% 75%, rgba(48, 173, 255, 0.08), transparent 38%),
-    radial-gradient(circle at 82% 18%, rgba(119, 130, 255, 0.08), transparent 40%);
+  background: radial-gradient(circle at 50% 82%, rgba(255, 255, 255, 0.04), transparent 44%);
   animation: embudo-drift 22s ease-in-out infinite alternate;
+}
+
+.embudo-bg-success-hero-blur {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: min(984px, 88vw);
+  height: min(527px, 58vh);
+  transform: translate(-50%, -50%);
+  opacity: 0.9;
+  background: rgb(3 7 18);
+  filter: blur(82px);
+  pointer-events: none;
 }
 
 .embudo-glass {
@@ -406,6 +417,59 @@ body {
   color: #8fbaf1;
 }
 
+.embudo-collapsed-evaluation-glow {
+  position: relative;
+  border-color: rgba(207, 226, 255, 0.44) !important;
+  background:
+    linear-gradient(148deg, rgba(7, 12, 26, 0.74), rgba(6, 9, 20, 0.68)) padding-box,
+    linear-gradient(
+        137deg,
+        #7dd3fc 0%,
+        #4361ee 30%,
+        #a855f7 55%,
+        #f72585 78%,
+        #fcd34d 100%
+      )
+      border-box;
+  background-size:
+    100% 100%,
+    260% 260%;
+  border: 1px solid transparent !important;
+  animation: embudo-glow-shift 4.8s linear infinite;
+  box-shadow:
+    0 0 26px rgba(120, 165, 255, 0.24),
+    0 0 42px rgba(156, 98, 255, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+}
+
+.embudo-collapsed-evaluation-glow::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(
+    circle at 35% 20%,
+    rgba(76, 191, 255, 0.22),
+    rgba(104, 95, 255, 0.14) 45%,
+    rgba(247, 37, 133, 0.08) 66%,
+    transparent 78%
+  );
+  filter: blur(18px);
+  pointer-events: none;
+}
+
+.embudo-input-invalid {
+  border-color: rgba(251, 113, 133, 0.92) !important;
+  box-shadow:
+    0 0 0 1px rgba(251, 113, 133, 0.24),
+    0 0 14px rgba(251, 113, 133, 0.22);
+}
+
+.embudo-invalid-pulse {
+  animation: embudo-invalid-pulse 360ms ease;
+}
+
 @media (max-width: 768px) {
   .embudo-branding-corner {
     position: static;
@@ -434,5 +498,33 @@ body {
   }
   100% {
     background-position: 100% 50%;
+  }
+}
+
+@keyframes embudo-glow-shift {
+  0% {
+    background-position:
+      0% 0%,
+      0% 50%;
+  }
+  100% {
+    background-position:
+      0% 0%,
+      100% 50%;
+  }
+}
+
+@keyframes embudo-invalid-pulse {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  35% {
+    transform: translate3d(-1px, 0, 0);
+  }
+  70% {
+    transform: translate3d(1px, 0, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
   }
 }
