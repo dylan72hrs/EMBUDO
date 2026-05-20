@@ -223,34 +223,19 @@ function readAdditionalEvaluationData(formData: FormData): AdditionalEvaluationD
   }
 }
 
-async function createJobWithFolio(originalFileCount: number) {
-  const year = new Date().getFullYear();
-
-  return prisma.$transaction(async (tx) => {
-    const sequence = await tx.comparisonSequence.upsert({
-      where: { year },
-      update: { current: { increment: 1 } },
-      create: { year, current: 1 }
-    });
-
-    const folio = `TC-MD-${year}-${String(sequence.current).padStart(6, "0")}`;
-    const job = await tx.processingJob.create({
-      data: {
-        folio,
-        status: "processing",
-        templateFilename: "template.xlsx",
-        originalFileCount,
-        warningsJson: "[]"
-      }
-    });
-
-    return { job, folio };
+async function createProcessingJob(originalFileCount: number) {
+  return prisma.processingJob.create({
+    data: {
+      status: "processing",
+      templateFilename: "template.xlsx",
+      originalFileCount,
+      warningsJson: "[]"
+    }
   });
 }
 
 export async function POST(request: Request) {
   let jobId: string | undefined;
-  let folio: string | undefined;
   const warnings: string[] = [];
   const diagnostics: DocumentDiagnostic[] = [];
 
@@ -342,10 +327,9 @@ export async function POST(request: Request) {
       }
     }
 
-    const created = await createJobWithFolio(quotes.length);
-    jobId = created.job.id;
-    folio = created.folio;
-    const activeJobId = created.job.id;
+    const job = await createProcessingJob(quotes.length);
+    jobId = job.id;
+    const activeJobId = job.id;
     await ensureJobDirectories(activeJobId);
 
     const templatePath = path.join(jobUploadDir(activeJobId), "template.xlsx");
@@ -474,7 +458,6 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           jobId: activeJobId,
-          folio,
           status: "error",
           message:
             "Los archivos enviados no corresponden a cotizaciones de proveedores o no contienen una tabla reconocible de productos, cantidades, precios y moneda.",
@@ -488,7 +471,6 @@ export async function POST(request: Request) {
 
     const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest);
     const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId, {
-      folio,
       additionalEvaluation
     });
     const allWarnings = userFacingWarnings([...new Set([...warnings, ...generated.warnings])]);
@@ -533,7 +515,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       jobId: activeJobId,
-      folio,
       status: "completed",
       suppliers: consolidated.suppliers.map((supplier) => supplier.name),
       itemsDetected: consolidated.comparison.length,
@@ -558,7 +539,6 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         jobId,
-        folio,
         status: "error",
         message: "Ocurrio un problema al procesar los archivos. Intenta nuevamente con cotizaciones legibles.",
         technicalMessage: message,

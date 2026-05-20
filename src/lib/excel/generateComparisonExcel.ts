@@ -35,6 +35,14 @@ export type GenerateComparisonExcelOptions = {
   additionalEvaluation?: AdditionalEvaluationData;
 };
 
+function writeFolioCell(worksheet: ExcelJS.Worksheet, folio: string) {
+  const folioCell = worksheet.getCell(TEMPLATE_MAP.cells.folio);
+  writeDynamicCell(folioCell, `Folio comparativa: ${folio.trim()}`);
+  cloneCellStyle(folioCell);
+  folioCell.font = { ...(folioCell.font ?? {}), bold: true, size: 9 };
+  folioCell.alignment = { ...(folioCell.alignment ?? {}), horizontal: "left", vertical: "middle" };
+}
+
 function hasFormula(cell: ExcelJS.Cell) {
   const value = cell.value;
   return Boolean(
@@ -368,11 +376,7 @@ export async function generateComparisonExcel(
   applyBlockBorders(worksheet);
 
   if (hasText(options.folio)) {
-    const folioCell = worksheet.getCell(TEMPLATE_MAP.cells.folio);
-    writeDynamicCell(folioCell, `Folio comparativa: ${options.folio?.trim()}`);
-    cloneCellStyle(folioCell);
-    folioCell.font = { ...(folioCell.font ?? {}), bold: true, size: 9 };
-    folioCell.alignment = { ...(folioCell.alignment ?? {}), horizontal: "left", vertical: "middle" };
+    writeFolioCell(worksheet, options.folio as string);
   }
 
   for (const [index, supplier] of suppliersToWrite.entries()) {
@@ -447,4 +451,17 @@ export async function generateComparisonExcel(
     outputPath: path.normalize(finalPath),
     warnings
   };
+}
+
+export async function applyFolioToGeneratedExcel(excelPath: string, folio: string) {
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.readFile(excelPath);
+  const worksheet = workbook.getWorksheet(TEMPLATE_MAP.sheetName);
+  if (!worksheet) {
+    throw new Error(`No existe la hoja "${TEMPLATE_MAP.sheetName}" en la plantilla.`);
+  }
+
+  writeFolioCell(worksheet, folio);
+  workbook.calcProperties.fullCalcOnLoad = true;
+  await workbook.xlsx.writeFile(excelPath);
 }

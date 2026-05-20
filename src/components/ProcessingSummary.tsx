@@ -27,9 +27,10 @@ export type ProcessResult = {
 
 type Props = {
   result: ProcessResult | null;
+  onFolioAssigned?: (folio: string) => void;
 };
 
-export function ProcessingSummary({ result }: Props) {
+export function ProcessingSummary({ result, onFolioAssigned }: Props) {
   if (!result) return null;
   const diagnostics = result.documentDiagnostics ?? [];
   const omittedDocs = diagnostics.filter((doc) => doc.status === "omitted");
@@ -119,9 +120,11 @@ export function ProcessingSummary({ result }: Props) {
         <div>
           <h2 className="text-2xl font-semibold">Tabla comparativa lista</h2>
           <p className="mt-2 text-sm text-slate-300">El Excel fue generado correctamente.</p>
-          {result.folio && <p className="mt-2 text-xs font-semibold text-cyan-100">Folio: {result.folio}</p>}
+          <p className="mt-2 text-xs font-semibold text-cyan-100">
+            Folio: {result.folio ? result.folio : "Pendiente de emision"}
+          </p>
         </div>
-        <DownloadButton downloadUrl={result.downloadUrl} />
+        <DownloadButton downloadUrl={result.downloadUrl} onFolioAssigned={onFolioAssigned} />
       </div>
 
       <div className="grid gap-3 sm:grid-cols-2">

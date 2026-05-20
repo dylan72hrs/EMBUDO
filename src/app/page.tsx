@@ -208,6 +208,10 @@ export default function Home() {
     setScreen("upload");
   }
 
+  function handleFolioAssigned(folio: string) {
+    setResult((current) => (current ? { ...current, folio } : current));
+  }
+
   function updateAdditionalEvaluationField<K extends keyof AdditionalEvaluationForm>(
     key: K,
     value: AdditionalEvaluationForm[K]
@@ -729,7 +733,7 @@ export default function Home() {
 
         {screen === "success" && (
           <div className="relative mx-auto mt-4 w-full max-w-4xl space-y-4 pb-10">
-            <ProcessingSummary result={result} />
+            <ProcessingSummary result={result} onFolioAssigned={handleFolioAssigned} />
             {result?.analytics && (
               <PurchaseAnalyticsDashboard
                 analytics={result.analytics}
