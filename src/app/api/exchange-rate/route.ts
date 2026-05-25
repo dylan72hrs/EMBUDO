@@ -7,10 +7,12 @@ function readExchangeRateRequest(url: URL): ExchangeRateRequest {
   const modeParam = url.searchParams.get("mode");
   const exchangeRateMode = modeParam === "manual" ? "manual" : "auto";
   const manualParam = url.searchParams.get("manualExchangeRateClpPerUsd");
+  const marginParam = url.searchParams.get("exchangeRateMarginClp");
 
   return {
     exchangeRateMode,
-    manualExchangeRateClpPerUsd: manualParam
+    manualExchangeRateClpPerUsd: manualParam,
+    exchangeRateMarginClp: marginParam
   };
 }
 
@@ -26,6 +28,20 @@ export async function GET(request: Request) {
       {
         status: "error",
         message: "Tipo de cambio manual invalido."
+      },
+      { status: 400 }
+    );
+  }
+  if (
+    exchangeRateRequest.exchangeRateMarginClp !== undefined &&
+    exchangeRateRequest.exchangeRateMarginClp !== null &&
+    String(exchangeRateRequest.exchangeRateMarginClp).trim() !== "" &&
+    !/^\d+$/.test(String(exchangeRateRequest.exchangeRateMarginClp).trim())
+  ) {
+    return NextResponse.json(
+      {
+        status: "error",
+        message: "Margen adicional del dolar invalido."
       },
       { status: 400 }
     );

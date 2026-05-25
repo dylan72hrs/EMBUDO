@@ -13,6 +13,19 @@ export const ExtractedQuoteItemSchema = z.object({
   total: z.number().nonnegative().nullable(),
   rawLine: z.string().optional(),
   rawBlock: z.string().optional(),
+  lineCategory: z
+    .enum([
+      "PRODUCTO_COMPARABLE",
+      "COSTO_ASOCIADO",
+      "SERVICIO",
+      "CONDICION_COMERCIAL",
+      "GARANTIA",
+      "ENVIO_DESPACHO_FLETE",
+      "LINEA_INFORMATIVA",
+      "LINEA_INVALIDA"
+    ])
+    .optional(),
+  omissionReason: z.string().optional(),
   extractionMethod: z.string().optional(),
   originalTotal: z.number().nonnegative().nullable().optional(),
   confidence: z.number().min(0).max(1).default(0.5)
@@ -39,6 +52,9 @@ export const SupplierSummarySchema = z.object({
 
 export const SupplierOfferSchema = z.object({
   currency: CurrencySchema,
+  originalCurrency: CurrencySchema.optional(),
+  wasConverted: z.boolean().optional(),
+  exchangeRateUsed: z.number().positive().optional(),
   unitPrice: z.number().nonnegative().nullable(),
   total: z.number().nonnegative().nullable(),
   confidence: z.number().min(0).max(1).default(0.5)

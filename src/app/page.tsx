@@ -15,7 +15,8 @@ const PROCESS_STEPS = [
   "Generando archivo final..."
 ] as const;
 const PROCESS_TIMEOUT_MS = 120_000;
-const EXCHANGE_RATE_MARGIN_CLP = 5;
+const DEFAULT_EXCHANGE_RATE_MARGIN_CLP = 5;
+const EXCHANGE_RATE_MARGIN_STORAGE_KEY = "comparativa_dolar_margen_adicional_clp";
 const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;
 const EXCHANGE_RATE_SOURCE_URL =
   "https://si3.bcentral.cl/Indicadoressiete/secure/Indicadoresdiarios.aspx";
@@ -115,6 +116,7 @@ export default function Home() {
   const [stepIndex, setStepIndex] = useState(0);
   const [exchangeRateMode, setExchangeRateMode] = useState<ExchangeRateMode>("auto");
   const [manualExchangeRate, setManualExchangeRate] = useState("");
+  const [exchangeRateMarginClp, setExchangeRateMarginClp] = useState(String(DEFAULT_EXCHANGE_RATE_MARGIN_CLP));
   const [exchangeRateError, setExchangeRateError] = useState("");
   const [exchangeRateInfo, setExchangeRateInfo] = useState<ExchangeRateInfo | null>(null);
   const [exchangeRateLoading, setExchangeRateLoading] = useState(false);
@@ -141,8 +143,29 @@ export default function Home() {
     const parsed = Number(manualExchangeRate.trim().replace(",", "."));
     return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
   }, [manualExchangeRate]);
+  const exchangeRateMarginValue = useMemo(() => {
+    const trimmed = exchangeRateMarginClp.trim();
+    if (!/^\d+$/.test(trimmed)) return undefined;
+    const parsed = Number(trimmed);
+    return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+  }, [exchangeRateMarginClp]);
   const manualFinalExchangeRate =
-    manualExchangeRateValue === undefined ? undefined : manualExchangeRateValue + EXCHANGE_RATE_MARGIN_CLP;
+    manualExchangeRateValue === undefined || exchangeRateMarginValue === undefined
+      ? undefined
+      : manualExchangeRateValue + exchangeRateMarginValue;
+
+  useEffect(() => {
+    const raw = window.localStorage.getItem(EXCHANGE_RATE_MARGIN_STORAGE_KEY);
+    if (!raw) return;
+    if (/^\d+$/.test(raw.trim())) {
+      setExchangeRateMarginClp(raw.trim());
+    }
+  }, []);
+
+  useEffect(() => {
+    if (exchangeRateMarginValue === undefined) return;
+    window.localStorage.setItem(EXCHANGE_RATE_MARGIN_STORAGE_KEY, String(exchangeRateMarginValue));
+  }, [exchangeRateMarginValue]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -153,6 +176,9 @@ export default function Home() {
       params.set("mode", exchangeRateMode);
       if (exchangeRateMode === "manual" && manualExchangeRateValue !== undefined) {
         params.set("manualExchangeRateClpPerUsd", String(manualExchangeRateValue));
+      }
+      if (exchangeRateMarginValue !== undefined) {
+        params.set("exchangeRateMarginClp", String(exchangeRateMarginValue));
       }
       return params;
     }
@@ -188,7 +214,7 @@ export default function Home() {
       controller.abort();
       if (intervalId) window.clearInterval(intervalId);
     };
-  }, [exchangeRateMode, manualExchangeRateValue]);
+  }, [exchangeRateMode, manualExchangeRateValue, exchangeRateMarginValue]);
 
   function removeFile(index: number) {
     setQuotes((current) => current.filter((_, currentIndex) => currentIndex !== index));
@@ -200,6 +226,7 @@ export default function Home() {
     setStepIndex(0);
     setExchangeRateMode("auto");
     setManualExchangeRate("");
+    setExchangeRateMarginClp(String(exchangeRateMarginValue ?? DEFAULT_EXCHANGE_RATE_MARGIN_CLP));
     setExchangeRateError("");
     setShowAdditionalEvaluation(false);
     setFieldErrors({});
@@ -306,6 +333,11 @@ export default function Home() {
   }
 
   function validateExchangeRateChoice() {
+    if (exchangeRateMarginValue === undefined) {
+      setExchangeRateError("El margen adicional del dolar debe ser un numero entero mayor o igual a 0.");
+      return false;
+    }
+
     if (exchangeRateMode === "auto") {
       setExchangeRateError("");
       return true;
@@ -354,6 +386,9 @@ export default function Home() {
       formData.append("exchangeRateMode", exchangeRateMode);
       if (exchangeRateMode === "manual") {
         formData.append("manualExchangeRateClpPerUsd", manualExchangeRate);
+      }
+      if (exchangeRateMarginValue !== undefined) {
+        formData.append("exchangeRateMarginClp", String(exchangeRateMarginValue));
       }
       if (hasAnyAdditionalData(additionalEvaluation)) {
         formData.append("additionalEvaluationData", JSON.stringify(additionalEvaluation));
@@ -445,7 +480,7 @@ export default function Home() {
                     />
                     <span className="text-sm font-semibold">Automatico</span>
                     <span className="mt-1 block text-xs text-white/82">
-                      Usar dolar observado del dia + $5
+                      Usar dolar observado del dia + margen configurable
                     </span>
                   </label>
 
@@ -488,10 +523,38 @@ export default function Home() {
                       <span className="text-sm text-white/85">CLP</span>
                     </div>
                     <p className="mt-2 text-xs text-white/80">
-                      Se sumaran automaticamente $5 al valor ingresado.
+                      Se sumara automaticamente el margen configurado al valor ingresado.
                     </p>
                   </div>
                 )}
+
+                <div className="mt-4 rounded-xl border border-white/15 bg-slate-950/45 p-3.5">
+                  <label className="text-sm font-medium text-white/92" htmlFor="exchangeRateMarginClp">
+                    Margen adicional dolar (CLP)
+                  </label>
+                  <div className="mt-2 flex items-center gap-2">
+                    <input
+                      id="exchangeRateMarginClp"
+                      type="number"
+                      min="0"
+                      step="1"
+                      inputMode="numeric"
+                      value={exchangeRateMarginClp}
+                      onChange={(event) => {
+                        const next = event.target.value;
+                        if (next === "" || /^\d+$/.test(next)) {
+                          setExchangeRateMarginClp(next);
+                          setExchangeRateError("");
+                        }
+                      }}
+                      className="h-10 w-40 rounded-xl border border-slate-500 bg-slate-950/75 px-3 text-sm text-white outline-none transition focus:border-cyan-300"
+                    />
+                    <span className="text-sm text-white/85">CLP</span>
+                  </div>
+                  <p className="mt-2 text-xs text-white/80">
+                    Tipo de cambio final = dolar base + margen adicional.
+                  </p>
+                </div>
 
                 <div className="mt-4 rounded-xl border border-cyan-200/35 bg-slate-950/36 p-3.5">
                   <p className="text-sm text-white/92">
@@ -506,6 +569,10 @@ export default function Home() {
                         ? `${formatRate(exchangeApplied)} CLP/USD`
                         : "No disponible"}
                     </span>
+                  </p>
+                  <p className="mt-1 text-xs text-white/75">
+                    Margen adicional aplicado:{" "}
+                    {exchangeRateMarginValue !== undefined ? `${exchangeRateMarginValue} CLP/USD` : "No valido"}
                   </p>
                   {exchangeRateInfo?.warning && (
                     <p className="mt-1 text-xs text-amber-200">{exchangeRateInfo.warning}</p>

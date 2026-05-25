@@ -237,6 +237,10 @@ async function main() {
     !comparison.warnings.some((warning) => /valores usd convertidos|tipo de cambio automatico/i.test(warning)),
     "Consolidacion: se mostro warning de conversion USD en caso 100% CLP"
   );
+  assert(
+    !comparison.warnings.some((warning) => /WW00008|SIN MARCAUNI|omitido de productos comparables/i.test(warning)),
+    "Consolidacion: warning tecnico crudo de costo asociado no fue limpiado"
+  );
 
   assertProductExistsInComparison(comparison.comparison, "PRISA", "ENDULZANTE IANSA CERO K");
   assertProductExistsInComparison(comparison.comparison, "PRISA", "GALLETA ARCOR MINI CONQUISTA");

@@ -422,7 +422,7 @@ export async function generateComparisonExcel(
       worksheet.getCell(TEMPLATE_MAP.rows.deliveryTime, block.unitPriceColumn),
       supplier.deliveryTime ?? null
     );
-    writeIfNotFormula(
+    writeDynamicCell(
       worksheet.getCell(associatedCostsRow, block.totalColumn),
       parseAssociatedCostsValue(supplier.associatedCosts) ?? supplier.associatedCosts ?? null
     );

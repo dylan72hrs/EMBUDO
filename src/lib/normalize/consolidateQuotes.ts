@@ -31,7 +31,14 @@ type WorkingRow = {
 
 type ConversionTracker = {
   applied: boolean;
+  convertedPerSupplier: Map<string, number>;
 };
+
+type WarningSection = "TIPO DE CAMBIO" | "CONVERSION DE MONEDAS" | "LINEAS OMITIDAS" | "RIESGOS";
+
+function formatWarning(section: WarningSection, message: string) {
+  return `[${section}] ${message}`;
+}
 
 function supplierSort(a: SupplierSummary, b: SupplierSummary) {
   const aIndex = SUPPLIER_ORDER.indexOf(a.name);
@@ -103,6 +110,10 @@ function extractAssociatedCostsFromWarnings(warnings: string[]) {
     total,
     details
   };
+}
+
+function isRawAssociatedCostWarning(warning: string) {
+  return warning.toLowerCase().includes("costo asociado detectado y omitido de productos comparables");
 }
 
 function createSupplierSummaries(quotes: ParsedQuote[]) {
@@ -207,6 +218,8 @@ function convertOfferToTarget(
 ): SupplierOffer {
   const offer: SupplierOffer = {
     currency: item.currency,
+    originalCurrency: item.currency,
+    wasConverted: false,
     unitPrice: item.unitPrice,
     total: item.total,
     confidence: item.confidence
@@ -216,14 +229,20 @@ function convertOfferToTarget(
 
   if (item.currency === "UNKNOWN") {
     warnings.push(
-      `${supplierName}: moneda no determinada para ${displayProductName(item.description)}; no se convierte a ${target}.`
+      formatWarning(
+        "RIESGOS",
+        `${supplierName}: moneda no determinada para ${displayProductName(item.description)}; no se aplico conversion.`
+      )
     );
     return normalizeOfferTotals(offer, quantity);
   }
 
   if (!exchangeRateValue) {
     warnings.push(
-      `No se pudo convertir ${displayProductName(item.description)} de ${supplierName} porque no hay tipo de cambio disponible.`
+      formatWarning(
+        "RIESGOS",
+        `No se pudo convertir ${displayProductName(item.description)} de ${supplierName} porque no hay tipo de cambio disponible.`
+      )
     );
     return offer;
   }
@@ -233,13 +252,16 @@ function convertOfferToTarget(
     (item.currency === "USD" && target === "CLP")
   ) {
     conversionTracker.applied = true;
-    warnings.push(
-      `${supplierName}: precios convertidos de ${item.currency} a ${target} usando tipo de cambio ${exchangeRateValue}.`
+    conversionTracker.convertedPerSupplier.set(
+      supplierName,
+      (conversionTracker.convertedPerSupplier.get(supplierName) ?? 0) + 1
     );
     return normalizeOfferTotals(
       {
         ...offer,
         currency: target,
+        wasConverted: true,
+        exchangeRateUsed: exchangeRateValue,
         unitPrice: convertPrice(item.unitPrice, item.currency, target, exchangeRateValue),
         total: convertPrice(item.total, item.currency, target, exchangeRateValue)
       },
@@ -313,9 +335,17 @@ export async function consolidateQuotes(
   exchangeRateRequest: ExchangeRateRequest = {}
 ): Promise<ConsolidatedComparison> {
   const scope = buildComparisonScope(quotes);
-  const warnings = [...scope.warnings, ...quotes.flatMap((quote) => quote.warnings)];
+  const warnings: string[] = [
+    ...scope.warnings,
+    ...quotes.flatMap((quote) => quote.warnings).filter((warning) => !isRawAssociatedCostWarning(warning))
+  ];
   if (quotes.length === 1) {
-    warnings.push("Solo se proceso una cotizacion valida; se genero tabla sin comparacion entre proveedores.");
+    warnings.push(
+      formatWarning(
+        "RIESGOS",
+        "Solo se proceso una cotizacion valida; no existe comparacion entre multiples proveedores."
+      )
+    );
   }
 
   const suppliers = createSupplierSummaries(quotes);
@@ -323,9 +353,12 @@ export async function consolidateQuotes(
     const associatedCosts = extractAssociatedCostsFromWarnings(quote.warnings);
     if (associatedCosts.total <= 0) continue;
     warnings.push(
-      `${quote.supplierName} incluye costos asociados: ${associatedCosts.details.join(", ")}. Total: ${formatClp(
-        associatedCosts.total
-      )}.`
+      formatWarning(
+        "LINEAS OMITIDAS",
+        `${quote.supplierName} incluye costos asociados: ${associatedCosts.details.join(", ")}. Total: ${formatClp(
+          associatedCosts.total
+        )}.`
+      )
     );
   }
   const usedBySupplier = new Map<string, Set<ExtractedQuoteItem>>();
@@ -334,10 +367,10 @@ export async function consolidateQuotes(
     quote.items.some((item) => isComparableProduct(item) && itemNeedsConversion(item, outputCurrency))
   );
   const exchange = await getExchangeRate(exchangeRateRequest);
-  const conversionTracker: ConversionTracker = { applied: false };
+  const conversionTracker: ConversionTracker = { applied: false, convertedPerSupplier: new Map() };
 
   if (requiresConversion) {
-    warnings.push(...exchange.warnings);
+    warnings.push(...exchange.warnings.map((warning) => formatWarning("TIPO DE CAMBIO", warning)));
   }
 
   for (const quote of quotes) {
@@ -443,17 +476,51 @@ export async function consolidateQuotes(
   });
 
   if (requiresConversion && conversionTracker.applied) {
-    if (outputCurrency === "CLP") {
-      warnings.push(`Valores USD convertidos a CLP usando tipo de cambio final ${exchange.finalRate} CLP/USD.`);
-    } else {
-      warnings.push(`Valores convertidos a ${outputCurrency} usando tipo de cambio final ${exchange.finalRate} CLP/USD.`);
-    }
+    warnings.push(
+      formatWarning(
+        "TIPO DE CAMBIO",
+        `Tipo de cambio final aplicado: ${exchange.finalRate} CLP/USD = dolar base ${exchange.baseRate} + margen adicional ${exchange.margin}.`
+      )
+    );
   }
 
   for (const quote of quotes) {
-    const hasTargetCurrency = quote.items.some((item) => item.currency === outputCurrency);
-    if (hasTargetCurrency) {
-      warnings.push(`${quote.supplierName}: precios ya venian en ${outputCurrency}.`);
+    const comparableItems = quote.items.filter(isComparableProduct);
+    const usdCount = comparableItems.filter((item) => item.currency === "USD").length;
+    const clpCount = comparableItems.filter((item) => item.currency === "CLP").length;
+    const unknownCount = comparableItems.filter((item) => item.currency === "UNKNOWN").length;
+    const convertedCount = conversionTracker.convertedPerSupplier.get(quote.supplierName) ?? 0;
+
+    if (usdCount > 0 && clpCount > 0) {
+      warnings.push(
+        formatWarning(
+          "CONVERSION DE MONEDAS",
+          `${quote.supplierName}: se detectaron productos en USD y CLP. Los productos en USD fueron convertidos a CLP (${convertedCount} conversiones) y los productos en CLP se mantuvieron sin conversion.`
+        )
+      );
+    } else if (usdCount > 0) {
+      warnings.push(
+        formatWarning(
+          "CONVERSION DE MONEDAS",
+          `${quote.supplierName}: se detectaron ${usdCount} productos en USD. Se convirtieron a CLP usando el tipo de cambio final configurado.`
+        )
+      );
+    } else if (clpCount > 0) {
+      warnings.push(
+        formatWarning(
+          "CONVERSION DE MONEDAS",
+          `${quote.supplierName}: productos detectados originalmente en CLP, sin conversion de moneda.`
+        )
+      );
+    }
+
+    if (unknownCount > 0) {
+      warnings.push(
+        formatWarning(
+          "RIESGOS",
+          `${quote.supplierName}: ${unknownCount} linea(s) con moneda no detectada requieren revision manual.`
+        )
+      );
     }
   }
 

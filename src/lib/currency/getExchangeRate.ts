@@ -1,6 +1,7 @@
 export type ExchangeRateRequest = {
   exchangeRateMode?: "auto" | "manual";
   manualExchangeRateClpPerUsd?: string | number | null;
+  exchangeRateMarginClp?: string | number | null;
 };
 
 export type ExchangeRateResult = {
@@ -26,13 +27,33 @@ function parsePositive(value?: string | number | null) {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
-function parseMargin() {
+function parseNonNegativeInteger(value?: string | number | null) {
+  if (value === undefined || value === null) return undefined;
+  const normalized = String(value).trim();
+  if (!normalized) return undefined;
+  if (!/^\d+$/.test(normalized)) return undefined;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+function parseMargin(requestMargin?: string | number | null) {
+  if (requestMargin !== undefined && requestMargin !== null && String(requestMargin).trim() !== "") {
+    const marginFromRequest = parseNonNegativeInteger(requestMargin);
+    if (marginFromRequest === undefined) {
+      return {
+        margin: DEFAULT_EXCHANGE_RATE_MARGIN_CLP,
+        warnings: ["Margen adicional invalido; se uso margen por defecto 5 CLP."]
+      };
+    }
+    return { margin: marginFromRequest, warnings: [] };
+  }
+
   const rawMargin = process.env.EXCHANGE_RATE_MARGIN_CLP;
   if (rawMargin === undefined || rawMargin.trim() === "") {
     return { margin: DEFAULT_EXCHANGE_RATE_MARGIN_CLP, warnings: [] };
   }
 
-  const margin = parsePositive(rawMargin);
+  const margin = parseNonNegativeInteger(rawMargin);
   if (margin === undefined) {
     return {
       margin: DEFAULT_EXCHANGE_RATE_MARGIN_CLP,
@@ -118,7 +139,7 @@ export function parseExchangeRateValue(value?: string | number | null) {
 }
 
 export async function getExchangeRate(request: ExchangeRateRequest = {}): Promise<ExchangeRateResult> {
-  const marginResult = parseMargin();
+  const marginResult = parseMargin(request.exchangeRateMarginClp);
   const { margin } = marginResult;
   const warnings = [...marginResult.warnings];
   const requestedMode = request.exchangeRateMode === "manual" ? "manual" : "auto";
@@ -136,7 +157,9 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
       "manual",
       [
         ...warnings,
-        `Tipo de cambio manual: ${formatRate(manualRate)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar base ${formatRate(
+          manualRate
+        )} + margen adicional ${formatRate(margin)}.`
       ],
       "Manual"
     );
@@ -151,7 +174,9 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
       "auto",
       [
         ...warnings,
-        `Tipo de cambio automatico: dolar observado ${formatRate(observed)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar base observado ${formatRate(
+          observed
+        )} + margen adicional ${formatRate(margin)}.`
       ],
       "Banco Central"
     );
@@ -166,8 +191,10 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
       "env",
       [
         ...warnings,
-        "No se pudo obtener dolar observado desde Banco Central.",
-        `Se uso tipo de cambio de entorno ${formatRate(envOverride)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+        "No fue posible obtener el dolar observado automaticamente.",
+        `Se utilizo dolar base de entorno ${formatRate(envOverride)} CLP/USD mas margen adicional ${formatRate(
+          margin
+        )} CLP/USD. Tipo de cambio final aplicado: ${formatRate(finalRate)} CLP/USD.`
       ],
       "Entorno"
     );
@@ -184,8 +211,10 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
     "fallback",
     [
       ...warnings,
-      "No se pudo obtener dolar observado desde Banco Central.",
-      `Se uso fallback ${formatRate(fallback)} + margen ${formatRate(margin)} = ${formatRate(finalRate)} CLP/USD.`
+      "No fue posible obtener el dolar observado automaticamente.",
+      `Se utilizo dolar base de respaldo ${formatRate(fallback)} CLP/USD mas margen adicional ${formatRate(
+        margin
+      )} CLP/USD. Tipo de cambio final aplicado: ${formatRate(finalRate)} CLP/USD.`
     ],
     "fallback"
   );

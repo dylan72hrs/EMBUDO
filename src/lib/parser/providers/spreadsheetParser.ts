@@ -155,6 +155,7 @@ function parseLineItem(
       total,
       rawLine: rowText,
       rawBlock: rowText,
+      lineCategory: "PRODUCTO_COMPARABLE",
       extractionMethod: "parser planilla estructural",
       originalTotal,
       confidence: 0.8

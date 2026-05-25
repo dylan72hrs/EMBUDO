@@ -250,6 +250,7 @@ function parseItemLine(line: string, documentCurrency: Currency, inTableRegion: 
       total,
       rawLine: normalizedLine,
       rawBlock: normalizedLine,
+      lineCategory: "PRODUCTO_COMPARABLE",
       extractionMethod: "parser generico estructural",
       originalTotal,
       confidence

@@ -13,6 +13,8 @@ type UnsafeItem = {
   total?: unknown;
   rawLine?: unknown;
   rawBlock?: unknown;
+  lineCategory?: unknown;
+  omissionReason?: unknown;
   extractionMethod?: unknown;
   originalTotal?: unknown;
   confidence?: unknown;
@@ -184,6 +186,17 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
       total,
       rawLine,
       rawBlock,
+      lineCategory: toOptionalString(rawItem.lineCategory) as
+        | "PRODUCTO_COMPARABLE"
+        | "COSTO_ASOCIADO"
+        | "SERVICIO"
+        | "CONDICION_COMERCIAL"
+        | "GARANTIA"
+        | "ENVIO_DESPACHO_FLETE"
+        | "LINEA_INFORMATIVA"
+        | "LINEA_INVALIDA"
+        | undefined,
+      omissionReason: toOptionalString(rawItem.omissionReason),
       extractionMethod: toOptionalString(rawItem.extractionMethod),
       originalTotal: toNullablePrice(rawItem.originalTotal),
       confidence: toConfidence(rawItem.confidence)

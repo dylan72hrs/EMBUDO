@@ -30,10 +30,44 @@ type Props = {
   onFolioAssigned?: (folio: string) => void;
 };
 
+const WARNING_SECTIONS = [
+  "TIPO DE CAMBIO",
+  "CONVERSION DE MONEDAS",
+  "LINEAS OMITIDAS",
+  "RIESGOS"
+] as const;
+
+function groupWarnings(warnings: string[]) {
+  const grouped = new Map<string, string[]>();
+  for (const section of WARNING_SECTIONS) {
+    grouped.set(section, []);
+  }
+  grouped.set("OTROS", []);
+
+  for (const warning of warnings) {
+    const match = warning.match(/^\[(.+?)\]\s*(.+)$/);
+    if (!match) {
+      grouped.get("OTROS")?.push(warning);
+      continue;
+    }
+
+    const section = match[1].toUpperCase();
+    const message = match[2].trim();
+    if (grouped.has(section)) {
+      grouped.get(section)?.push(message);
+    } else {
+      grouped.get("OTROS")?.push(warning);
+    }
+  }
+
+  return grouped;
+}
+
 export function ProcessingSummary({ result, onFolioAssigned }: Props) {
   if (!result) return null;
   const diagnostics = result.documentDiagnostics ?? [];
   const omittedDocs = diagnostics.filter((doc) => doc.status === "omitted");
+  const groupedWarnings = groupWarnings(result.warnings);
 
   if (result.status === "error") {
     return (
@@ -143,11 +177,36 @@ export function ProcessingSummary({ result, onFolioAssigned }: Props) {
           <summary className="cursor-pointer text-sm font-semibold text-amber-100">
             Ver advertencias
           </summary>
-          <ul className="mt-3 space-y-2 text-sm text-amber-100">
-            {result.warnings.map((warning) => (
-              <li key={warning}>{warning}</li>
-            ))}
-          </ul>
+          <div className="mt-3 space-y-4 text-sm text-amber-100">
+            {WARNING_SECTIONS.map((section) => {
+              const entries = groupedWarnings.get(section) ?? [];
+              if (entries.length === 0) return null;
+              return (
+                <div key={section}>
+                  <p className="text-xs font-semibold uppercase tracking-[0.08em] text-amber-200">
+                    {section}
+                  </p>
+                  <ul className="mt-2 space-y-1.5">
+                    {entries.map((entry, index) => (
+                      <li key={`${section}-${index}`}>{entry}</li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
+            {(groupedWarnings.get("OTROS") ?? []).length > 0 && (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.08em] text-amber-200">
+                  OTROS
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {(groupedWarnings.get("OTROS") ?? []).map((entry, index) => (
+                    <li key={`otros-${index}`}>{entry}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </details>
       )}
 
