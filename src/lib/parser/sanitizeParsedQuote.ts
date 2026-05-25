@@ -1,5 +1,6 @@
 import { normalizeProductName } from "@/lib/normalize/normalizeProductName";
 import { parseMoney } from "@/lib/parser/parseMoney";
+import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 
 type UnsafeItem = {
   sourceItem?: unknown;
@@ -27,9 +28,6 @@ type UnsafeParsedQuote = {
   items?: unknown;
   warnings?: unknown;
 };
-
-const ASSOCIATED_COST_LINE =
-  /\b(cobro log[ií]stico|log[ií]stica|logistico|logistica|flete|despacho|env[ií]o|transporte|cargo despacho|cargo por despacho|costo despacho|costo de env[ií]o|costos de env[ií]o|servicio de entrega|delivery|shipping|freight|handling)\b/i;
 
 function warningPrefix(supplierName: string, index: number) {
   return `${supplierName} item ${index + 1}`;
@@ -132,7 +130,7 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
     const rawBlock = toOptionalString(rawItem.rawBlock);
     const currency = toCurrency(rawItem.currency);
 
-    if (ASSOCIATED_COST_LINE.test(description) || ASSOCIATED_COST_LINE.test(rawLine ?? "")) {
+    if (isAssociatedCostText(description) || isAssociatedCostText(rawLine ?? "")) {
       const amount = parseAssociatedAmount(rawLine, total, unitPrice);
       const costType = extractAssociatedCostType(description);
       if (typeof amount === "number" && Number.isFinite(amount) && amount > 0) {

@@ -1,7 +1,7 @@
 import { detectCurrency, detectCurrencyForLine } from "@/lib/parser/detectCurrency";
 import { parseMoney } from "@/lib/parser/parseMoney";
 import { normalizeProductName } from "@/lib/normalize/normalizeProductName";
-import { linesOf, normalizeForSearch } from "@/lib/parser/providers/tableParserUtils";
+import { isAssociatedCostText, linesOf, normalizeForSearch } from "@/lib/parser/providers/tableParserUtils";
 import type { Currency, ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
 
 type ParsedLineResult = {
@@ -51,8 +51,6 @@ const HARD_STOP_PATTERNS = [
   /^banco\b/
 ];
 
-const LOGISTIC_PATTERNS =
-  /\b(cobro log[ií]stico|log[ií]stica|logistico|logistica|logistic|flete|despacho|envio|env[ií]o|transporte|cargo despacho|cargo por despacho|costo despacho|costo de envio|costos de envio|servicio de entrega|delivery|shipping|freight|handling)\b/i;
 const MONEY_PATTERN =
   /(?:US\$|USD|CLP|\$)\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d+[.,]\d{2}/gi;
 const UNIT_TOKENS = "(?:UND|UNI|UN|U|CU|BOL|CJA|PQT|PACK|PAR|SET|LT|ML|KG|GR|DP|UM|U/M|EA|PCS?|UNIDADES?)";
@@ -190,7 +188,7 @@ function parseItemLine(line: string, documentCurrency: Currency, inTableRegion: 
   const normalizedLine = line.replace(/\s+/g, " ").trim();
   if (!normalizedLine || isSummaryOrMetadataLine(normalizedLine)) return { warnings };
 
-  if (LOGISTIC_PATTERNS.test(normalizedLine)) {
+  if (isAssociatedCostText(line)) {
     if (extractMoneyTokens(normalizedLine, documentCurrency).length > 0) {
       warnings.push(`Costo asociado detectado y omitido de productos comparables: ${normalizedLine}`);
     }

@@ -2,6 +2,7 @@ import path from "node:path";
 import { detectCurrency, detectCurrencyForLine } from "@/lib/parser/detectCurrency";
 import { parseMoney } from "@/lib/parser/parseMoney";
 import { normalizeProductName } from "@/lib/normalize/normalizeProductName";
+import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 import type { Currency, ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
 import * as XLSX from "xlsx";
 
@@ -22,8 +23,6 @@ const UNIT_HEADERS = ["unidad", "und", "um", "u/m", "uni"];
 const CODE_HEADERS = ["codigo", "cod", "sku", "ref", "item"];
 
 const SUMMARY_LINE = /\b(total neto|subtotal|iva|ila|total general|total pagar|condicion de pago|observacion|nota legal)\b/i;
-const LOGISTIC_LINE =
-  /\b(cobro logistico|cobro logístico|logistica|logistico|flete|despacho|envio|envío|transporte|cargo despacho|cargo por despacho|costo despacho|costo de envio|costos de envio|servicio de entrega|delivery|shipping|freight|handling)\b/i;
 
 function normalize(value: string) {
   return value
@@ -90,13 +89,13 @@ function parseLineItem(
 ): { item?: ExtractedQuoteItem; warnings: string[] } {
   const warnings: string[] = [];
   const description = asText(row[map.description]);
+  const rowText = row.map(asText).filter(Boolean).join(" ");
   if (!description || description.length < 3 || SUMMARY_LINE.test(description)) return { warnings };
-  if (LOGISTIC_LINE.test(description)) {
+  if (isAssociatedCostText(description) || isAssociatedCostText(rowText)) {
     warnings.push(`Costo asociado detectado y omitido de productos comparables: ${description}`);
     return { warnings };
   }
 
-  const rowText = row.map(asText).filter(Boolean).join(" ");
   const quantityRaw = readNumberFromCell(row[map.quantity]);
   const unitPriceRaw = map.unitPrice !== undefined ? readNumberFromCell(row[map.unitPrice]) : null;
   const totalRaw = map.total !== undefined ? readNumberFromCell(row[map.total]) : null;

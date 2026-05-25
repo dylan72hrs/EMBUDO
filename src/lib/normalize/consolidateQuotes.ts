@@ -3,6 +3,7 @@ import { getExchangeRate, type ExchangeRateRequest } from "@/lib/currency/getExc
 import { compareToBaseItem } from "@/lib/normalize/matchProducts";
 import { displayProductName } from "@/lib/normalize/normalizeProductName";
 import { parseMoney } from "@/lib/parser/parseMoney";
+import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 import type {
   ComparisonItem,
   ConsolidatedComparison,
@@ -96,6 +97,7 @@ function createSupplierSummaries(quotes: ParsedQuote[]) {
 function isComparableProduct(item: ExtractedQuoteItem) {
   const description = item.description.toLowerCase();
   if (NON_PRODUCT_PATTERN.test(description)) return false;
+  if (isAssociatedCostText(item.description) || isAssociatedCostText(item.rawLine ?? "")) return false;
   if (!item.rawLine && !item.rawBlock) return false;
   return item.unitPrice !== null || item.total !== null;
 }

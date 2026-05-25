@@ -1,8 +1,11 @@
 import ExcelJS from "exceljs";
+import path from "node:path";
 import { consolidateQuotes } from "../src/lib/normalize/consolidateQuotes";
+import { generateComparisonExcel } from "../src/lib/excel/generateComparisonExcel";
 import { highlightBestPrices } from "../src/lib/excel/highlightBestPrices";
 import { TEMPLATE_MAP } from "../src/lib/excel/templateMap";
 import { parseQuoteFromText } from "../src/lib/parser/parseQuoteFromText";
+import { ensureJobDirectories } from "../src/lib/utils/fileStorage";
 
 function assert(condition: unknown, message: string): asserts condition {
   if (!condition) {
@@ -109,6 +112,26 @@ function assertCellFill(cell: ExcelJS.Cell, argb: string, message: string) {
   const fill = cell.fill;
   assert(fill && fill.type === "pattern" && fill.pattern === "solid", message);
   assert(fill.fgColor?.argb === argb, `${message} (argb esperado ${argb}, actual ${fill.fgColor?.argb})`);
+}
+
+function normalizeLabel(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findRowByLabel(worksheet: ExcelJS.Worksheet, label: string) {
+  const target = normalizeLabel(label);
+  for (let row = 1; row <= worksheet.rowCount; row += 1) {
+    const values = worksheet.getRow(row).values;
+    const arrayValues = Array.isArray(values) ? values : [];
+    if (arrayValues.some((value) => normalizeLabel(value) === target)) return row;
+  }
+  return undefined;
 }
 
 async function main() {
@@ -305,8 +328,39 @@ async function main() {
   assertCellFill(worksheet.getCell(rowTwo, blockA.totalColumn), "FFFCE4D6", "Highlight: mayor total debe quedar rojo");
   assertCellFill(worksheet.getCell(rowTwo, blockB.totalColumn), "FFE2F0D9", "Highlight: menor total debe quedar verde");
 
+  const templatePath = path.resolve("templates", "template.xlsx");
+  const validationJobId = `validate-${Date.now()}`;
+  await ensureJobDirectories(validationJobId);
+  const excelResult = await generateComparisonExcel(templatePath, comparison, validationJobId);
+  const verificationWorkbook = new ExcelJS.Workbook();
+  await verificationWorkbook.xlsx.readFile(excelResult.outputPath);
+  const verificationSheet = verificationWorkbook.getWorksheet(TEMPLATE_MAP.sheetName);
+  assert(verificationSheet, "Excel: no se encontro hoja de tabla comparativa");
+
+  for (let row = TEMPLATE_MAP.productStartRow; row <= TEMPLATE_MAP.productEndRow; row += 1) {
+    const productValue = verificationSheet!.getCell(row, TEMPLATE_MAP.columns.product).value;
+    const productText = typeof productValue === "string" ? productValue : String(productValue ?? "");
+    assert(
+      !/logistico|logistica|flete|despacho|envio|envío|transporte|shipping|freight|delivery/i.test(productText),
+      `Excel: costo asociado aparecio como producto en fila ${row}: ${productText}`
+    );
+  }
+
+  const associatedCostsRow = findRowByLabel(verificationSheet!, "COSTOS ASOCIADOS");
+  assert(associatedCostsRow, "Excel: no se encontro fila COSTOS ASOCIADOS");
+  const dimercIndex = comparison.suppliers.findIndex((supplier) => supplier.name === "Dimerc");
+  assert(dimercIndex >= 0, "Excel: no se encontro proveedor Dimerc en consolidacion");
+  const dimercBlock = TEMPLATE_MAP.supplierBlocks[dimercIndex];
+  const associatedValue = verificationSheet!.getCell(associatedCostsRow!, dimercBlock.totalColumn).value;
+  const associatedText = typeof associatedValue === "string" ? associatedValue : String(associatedValue ?? "");
+  assert(associatedText.trim().length > 0, "Excel: COSTOS ASOCIADOS para Dimerc quedo vacio");
+  assert(
+    /3500|3\.500|3,500/i.test(associatedText),
+    `Excel: COSTOS ASOCIADOS para Dimerc no contiene monto esperado, valor actual: ${associatedText}`
+  );
+
   console.log(
-    "OK generic parser + consolidation + highlight: PRISA=11, Dimerc=11 (logistico excluido), union global valida y reglas de color correctas."
+    "OK generic parser + consolidation + highlight + excel costs: PRISA=11, Dimerc=11 (logistico excluido), costos asociados en fila COSTOS ASOCIADOS y sin filas logisticas en productos."
   );
 }
 

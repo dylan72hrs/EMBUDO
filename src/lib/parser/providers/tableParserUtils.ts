@@ -3,6 +3,27 @@ import { parseMoney } from "@/lib/parser/parseMoney";
 import { normalizeProductName } from "@/lib/normalize/normalizeProductName";
 import type { Currency, ExtractedQuoteItem } from "@/lib/validations/quoteSchemas";
 
+const ASSOCIATED_COST_KEYWORDS = [
+  "cobrologistico",
+  "cobrologistica",
+  "logistico",
+  "logistica",
+  "flete",
+  "despacho",
+  "envio",
+  "transporte",
+  "shipping",
+  "freight",
+  "delivery",
+  "handling",
+  "cargodespacho",
+  "cargopordespacho",
+  "costodespacho",
+  "costodeenvio",
+  "costosdeenvio",
+  "serviciodeentrega"
+];
+
 export function linesOf(text: string) {
   return text
     .split(/\r?\n/)
@@ -17,6 +38,19 @@ export function normalizeForSearch(input: string) {
     .toLowerCase()
     .replace(/\s+/g, " ")
     .trim();
+}
+
+export function normalizeCompact(input: string) {
+  return input
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+}
+
+export function isAssociatedCostText(input: string) {
+  const compact = normalizeCompact(input);
+  return ASSOCIATED_COST_KEYWORDS.some((keyword) => compact.includes(keyword));
 }
 
 export function findRegion(lines: string[], starts: RegExp[], stops: RegExp[]) {
