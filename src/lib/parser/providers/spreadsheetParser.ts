@@ -100,13 +100,12 @@ function parseLineItem(
   const unitPriceRaw = map.unitPrice !== undefined ? readNumberFromCell(row[map.unitPrice]) : null;
   const totalRaw = map.total !== undefined ? readNumberFromCell(row[map.total]) : null;
   const currency = detectCurrencyForLine(rowText, documentCurrency);
-
-  let quantity = quantityRaw;
-  if ((quantity === null || quantity <= 0) && unitPriceRaw !== null) {
-    quantity = 1;
-    warnings.push(`Cantidad asumida en 1 por falta de evidencia explicita para producto ${description}.`);
+  if (currency === "UNKNOWN") {
+    warnings.push(`Linea omitida por moneda no reconocida: ${description}`);
+    return { warnings };
   }
 
+  const quantity = quantityRaw;
   if (quantity === null || quantity <= 0) {
     warnings.push(`Linea omitida por cantidad invalida: ${description}`);
     return { warnings };

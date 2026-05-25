@@ -57,7 +57,7 @@ const HARD_STOP_PATTERNS = [
 const LOGISTIC_PATTERNS = /\b(cobro logistico|cobro logístico|flete|despacho|envio|envío|transporte)\b/i;
 const MONEY_PATTERN =
   /(?:US\$|USD|CLP|\$)\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d+[.,]\d{2}/gi;
-const UNIT_TOKENS = "(?:CU|UN|UND|UNI|U/M|UM|EA|PCS?|UNIDADES?)";
+const UNIT_TOKENS = "(?:UND|UNI|UN|U|CU|BOL|CJA|PQT|PACK|PAR|SET|LT|ML|KG|GR|UM|U/M|EA|PCS?|UNIDADES?)";
 
 function extractQuoteNumber(text: string) {
   return text.match(/(?:cotizaci[oó]n|quote|presupuesto|n[°ºo]\.?)[^\d]{0,12}([A-Z0-9-]{4,})/i)?.[1];
@@ -163,6 +163,20 @@ function parseQuantityTail(beforeAmounts: string) {
     }
   }
 
+  const compactUnitQuantity = beforeAmounts.match(
+    new RegExp(`^(?<body>.+?)(?<unit>${UNIT_TOKENS})\\s*(?<qty>\\d+(?:[.,]\\d+)?)\\s*$`, "i")
+  );
+  if (compactUnitQuantity?.groups) {
+    const quantity = parseQuantity(compactUnitQuantity.groups.qty);
+    if (quantity) {
+      return {
+        beforeQuantity: compactUnitQuantity.groups.body.trim(),
+        quantity,
+        unit: normalizeUnit(compactUnitQuantity.groups.unit)
+      };
+    }
+  }
+
   return null;
 }
 
@@ -216,8 +230,12 @@ function parseItemLine(
 
   const beforeAmounts = normalizedLine.slice(0, unitToken.index).trim();
   const parsedQuantity = parseQuantityTail(beforeAmounts);
+  if (!parsedQuantity) {
+    warnings.push(`Linea omitida porque no se pudo detectar cantidad con evidencia: ${normalizedLine}`);
+    return { warnings };
+  }
 
-  const parsedDescription = splitSourceAndDescription(parsedQuantity?.beforeQuantity ?? beforeAmounts);
+  const parsedDescription = splitSourceAndDescription(parsedQuantity.beforeQuantity);
   const description = parsedDescription.description.replace(/\s+/g, " ").trim();
   if (description.length < 4 || isSummaryOrMetadataLine(description)) return { warnings };
 
@@ -228,11 +246,8 @@ function parseItemLine(
   }
 
   const unitPrice = unitToken.value;
-  const quantity = parsedQuantity?.quantity ?? 1;
-  const unit = parsedQuantity?.unit ?? "CU";
-  if (!parsedQuantity) {
-    warnings.push(`Cantidad asumida en 1 por falta de evidencia explicita para producto ${description}.`);
-  }
+  const quantity = parsedQuantity.quantity;
+  const unit = parsedQuantity.unit;
   let total = totalToken?.value ?? null;
   const expectedTotal = unitPrice * quantity;
   let confidence = totalToken ? 0.78 : 0.62;
