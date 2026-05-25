@@ -49,6 +49,7 @@ Codigo Descripcion UND Cantidad Precio Unitario Total
 11252 GALLETA COSTA COCO 125 GRS. UND 1 $701 $701
 85895 GALLETA OREO REGULAR X 108 GRS UND 1 $735 $735
 12547 GALLETA COSTA MINI TUAREG X 48 GRS UND 1 $247 $247
+PRI-ENV Despacho SIN MARCA UNI 1 $2.000 $2.000
 Total Neto $47.023
 IVA $8.934
 Total $55.957`;
@@ -67,6 +68,7 @@ Codigo Descripcion Marca Und Cantidad Precio Total
 444867 GALLETA FRAC CLASICA 110 GR COSTA UNI 1 $ 659 $ 659
 444866 BARRA CEREAL CHOCOLATE 25 GR COSTA UNI 2 $ 430 $ 860
 WW00008 Cobro Logistico SIN MARCA UNI 1 $ 3.500 $ 3.500
+WW00009 Despacho SIN MARCA UNI 1 $ 2.000 $ 2.000
 Total Neto $ 54.204
 IVA $ 10.299
 Total $ 64.503`;
@@ -277,6 +279,17 @@ async function main() {
     typeof dimercSummary.associatedCosts === "string" && dimercSummary.associatedCosts.length > 0,
     "Consolidacion: Cobro Logistico no fue registrado como costo asociado del proveedor"
   );
+  assert(
+    Number(dimercSummary.associatedCosts) === 5500,
+    `Consolidacion: total de costos asociados Dimerc esperado 5500, actual ${dimercSummary.associatedCosts}`
+  );
+
+  const prisaSummary = comparison.suppliers.find((supplier) => supplier.name === "PRISA");
+  assert(prisaSummary, "Consolidacion: falta resumen de proveedor PRISA");
+  assert(
+    Number(prisaSummary.associatedCosts) === 2000,
+    `Consolidacion: total de costos asociados PRISA esperado 2000, actual ${prisaSummary.associatedCosts}`
+  );
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("TEST");
@@ -355,9 +368,17 @@ async function main() {
   const associatedText = typeof associatedValue === "string" ? associatedValue : String(associatedValue ?? "");
   assert(associatedText.trim().length > 0, "Excel: COSTOS ASOCIADOS para Dimerc quedo vacio");
   assert(
-    /3500|3\.500|3,500/i.test(associatedText),
+    /5500|5\.500|5,500/i.test(associatedText),
     `Excel: COSTOS ASOCIADOS para Dimerc no contiene monto esperado, valor actual: ${associatedText}`
   );
+
+  const prisaIndex = comparison.suppliers.findIndex((supplier) => supplier.name === "PRISA");
+  assert(prisaIndex >= 0, "Excel: no se encontro proveedor PRISA en consolidacion");
+  const prisaBlock = TEMPLATE_MAP.supplierBlocks[prisaIndex];
+  const prisaAssociatedValue = verificationSheet!.getCell(associatedCostsRow!, prisaBlock.totalColumn).value;
+  const prisaAssociatedText =
+    typeof prisaAssociatedValue === "string" ? prisaAssociatedValue : String(prisaAssociatedValue ?? "");
+  assert(prisaAssociatedText.trim().length > 0, "Excel: COSTOS ASOCIADOS para PRISA quedo vacio");
 
   console.log(
     "OK generic parser + consolidation + highlight + excel costs: PRISA=11, Dimerc=11 (logistico excluido), costos asociados en fila COSTOS ASOCIADOS y sin filas logisticas en productos."

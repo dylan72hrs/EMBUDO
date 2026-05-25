@@ -118,10 +118,18 @@ function findRowByLabel(worksheet: ExcelJS.Worksheet, label: string, fallbackRow
   for (let row = 1; row <= worksheet.rowCount; row += 1) {
     const rowValues = worksheet.getRow(row).values;
     const valuesArray = Array.isArray(rowValues) ? rowValues : [];
-    const hasLabel = valuesArray.some((value) => normalizeLabel(value) === normalizedTarget);
+    const hasLabel = valuesArray.some((value) => normalizeLabel(value).includes(normalizedTarget));
     if (hasLabel) return row;
   }
   return fallbackRow;
+}
+
+function parseAssociatedCostsValue(value?: string) {
+  if (!value) return null;
+  const normalized = value.replace(/[^\d.,-]/g, "").replace(/\./g, "");
+  const parsed = Number(normalized.replace(",", "."));
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed;
 }
 
 function applyBlockBorders(worksheet: ExcelJS.Worksheet) {
@@ -416,8 +424,12 @@ export async function generateComparisonExcel(
     );
     writeIfNotFormula(
       worksheet.getCell(associatedCostsRow, block.totalColumn),
-      supplier.associatedCosts ?? null
+      parseAssociatedCostsValue(supplier.associatedCosts) ?? supplier.associatedCosts ?? null
     );
+    const associatedCell = worksheet.getCell(associatedCostsRow, block.totalColumn);
+    if (typeof associatedCell.value === "number") {
+      applyCurrencyFormat(associatedCell, "CLP");
+    }
   }
 
   for (const [index, item] of itemsToWrite.entries()) {

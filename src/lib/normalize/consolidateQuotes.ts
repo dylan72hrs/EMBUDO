@@ -53,29 +53,56 @@ function formatClp(value: number) {
   }).format(value);
 }
 
+type AssociatedCostEntry = {
+  type: string;
+  amount: number;
+};
+
+function resolveAssociatedCostType(warning: string) {
+  const lower = warning.toLowerCase();
+  if (lower.includes("cobro log")) return "Cobro Logístico";
+  if (lower.includes("logistic") || lower.includes("logistica") || lower.includes("logistico")) return "Logística";
+  if (lower.includes("flete")) return "Flete";
+  if (lower.includes("despacho")) return "Despacho";
+  if (lower.includes("envio") || lower.includes("envío")) return "Envío";
+  if (lower.includes("transporte")) return "Transporte";
+  if (lower.includes("delivery")) return "Delivery";
+  if (lower.includes("shipping")) return "Shipping";
+  if (lower.includes("freight")) return "Freight";
+  if (lower.includes("handling")) return "Handling";
+  return "Costo asociado";
+}
+
 function extractAssociatedCostsFromWarnings(warnings: string[]) {
-  const costs: string[] = [];
-  const seen = new Set<string>();
+  const entries: AssociatedCostEntry[] = [];
 
   for (const warning of warnings) {
-    if (!ASSOCIATED_COST_PATTERN.test(warning)) continue;
+    if (!isAssociatedCostText(warning) && !ASSOCIATED_COST_PATTERN.test(warning)) continue;
 
-    const typeMatch = warning.match(/incluye\s+(.+?)\s+por\s+/i);
-    const normalizedType = typeMatch?.[1]?.trim() ?? "Costo asociado";
-    const moneyMatch = warning.match(/(?:US\$|USD|CLP|\$)\s*\d[\d.,]*/i);
-    const parsedAmount = moneyMatch ? parseMoney(moneyMatch[0]) : null;
-    const label =
-      typeof parsedAmount === "number" && Number.isFinite(parsedAmount)
-        ? `${normalizedType}: ${formatClp(parsedAmount)}`
-        : warning.trim();
+    const moneyMatches = [...warning.matchAll(/(?:US\$|USD|CLP|\$)\s*\d[\d.,]*/gi)];
+    const amountToken = moneyMatches.at(-1)?.[0];
+    const parsedAmount = amountToken ? parseMoney(amountToken) : null;
+    if (typeof parsedAmount !== "number" || !Number.isFinite(parsedAmount) || parsedAmount <= 0) continue;
 
-    if (!seen.has(label)) {
-      seen.add(label);
-      costs.push(label);
-    }
+    entries.push({
+      type: resolveAssociatedCostType(warning),
+      amount: parsedAmount
+    });
   }
 
-  return costs;
+  if (entries.length === 0) {
+    return {
+      total: 0,
+      details: [] as string[]
+    };
+  }
+
+  const details = entries.map((entry) => `${entry.type} ${formatClp(entry.amount)}`);
+  const total = entries.reduce((sum, entry) => sum + entry.amount, 0);
+  return {
+    total,
+    details
+  };
 }
 
 function createSupplierSummaries(quotes: ParsedQuote[]) {
@@ -87,7 +114,7 @@ function createSupplierSummaries(quotes: ParsedQuote[]) {
       name: quote.supplierName,
       paymentCondition: quote.paymentCondition,
       deliveryTime: quote.deliveryTime,
-      associatedCosts: associatedCosts.length > 0 ? associatedCosts.join(" | ") : undefined
+      associatedCosts: associatedCosts.total > 0 ? String(Math.round(associatedCosts.total)) : undefined
     });
   }
 
@@ -292,6 +319,15 @@ export async function consolidateQuotes(
   }
 
   const suppliers = createSupplierSummaries(quotes);
+  for (const quote of quotes) {
+    const associatedCosts = extractAssociatedCostsFromWarnings(quote.warnings);
+    if (associatedCosts.total <= 0) continue;
+    warnings.push(
+      `${quote.supplierName} incluye costos asociados: ${associatedCosts.details.join(", ")}. Total: ${formatClp(
+        associatedCosts.total
+      )}.`
+    );
+  }
   const usedBySupplier = new Map<string, Set<ExtractedQuoteItem>>();
   const outputCurrency = targetCurrency();
   const requiresConversion = quotes.some((quote) =>
