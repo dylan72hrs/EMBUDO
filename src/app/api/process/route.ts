@@ -361,7 +361,11 @@ export async function POST(request: Request) {
         if (parsed.items.length === 0) {
           omittedInvalidCount += 1;
           diagnostics.push(buildInvalidDiagnostic(quoteFile.name, kind, looksLikeQuote));
-          warnings.push(`Se omitio ${quoteFile.name}: este archivo no parece ser una cotizacion valida.`);
+          warnings.push(
+            looksLikeQuote
+              ? `Se omitio ${quoteFile.name}: cotizacion detectada, pero no se pudo leer la tabla con seguridad.`
+              : `Se omitio ${quoteFile.name}: este archivo no parece ser una cotizacion valida.`
+          );
 
           await prisma.uploadedQuote.update({
             where: { id: uploadedQuote.id },

@@ -48,7 +48,9 @@ export function parseEchaveTurriQuote(text: string): ParsedQuote {
       parsed.unitPrice,
       parsed.total,
       parsed.currency,
-      0.9
+      0.9,
+      segment,
+      "parser especifico Echave Turri"
     );
     if (item) items.push(item);
   };

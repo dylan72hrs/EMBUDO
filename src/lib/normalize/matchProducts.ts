@@ -74,6 +74,67 @@ function shortBaseName(description: string) {
     .trim();
 }
 
+function comparableTokens(description: string) {
+  const aliases: Record<string, string> = {
+    inst: "instantaneo",
+    instant: "instantaneo",
+    selecc: "seleccion",
+    seleccion: "seleccion",
+    fin: "fina",
+    fco: "frasco",
+    liquida: "liquido",
+    liquido: "liquido",
+    uni: "unidad",
+    und: "unidad"
+  };
+
+  return normalizeText(description)
+    .split(" ")
+    .map((token) => aliases[token] ?? token)
+    .filter((token) => token.length > 2 && !/^\d{5,}$/.test(token));
+}
+
+function measurements(description: string) {
+  const normalized = normalizeText(description);
+  return [...normalized.matchAll(/\b(\d+(?:[.,]\d+)?)\s*(ml|cc|l|lt|gr|g|kg|un|und|uni)\b/g)].map(
+    (match) => `${Number(match[1].replace(",", "."))}-${match[2].replace(/^gr$/, "g").replace(/^lt$/, "l")}`
+  );
+}
+
+function hasMeasurementMismatch(baseDescription: string, candidateDescription: string) {
+  const baseMeasurements = measurements(baseDescription);
+  const candidateMeasurements = measurements(candidateDescription);
+  if (baseMeasurements.length === 0 || candidateMeasurements.length === 0) return false;
+  return !baseMeasurements.some((value) => candidateMeasurements.includes(value));
+}
+
+function genericTokenMatch(baseDescription: string, candidateDescription: string): MatchResult {
+  if (hasMeasurementMismatch(baseDescription, candidateDescription)) return { quality: "none" };
+
+  const baseTokens = comparableTokens(baseDescription);
+  const candidateTokens = comparableTokens(candidateDescription);
+  if (baseTokens.length < 3 || candidateTokens.length < 3) return { quality: "none" };
+
+  const overlap = baseTokens.filter((token) => candidateTokens.includes(token));
+  const overlapScore = overlap.length / Math.min(baseTokens.length, candidateTokens.length);
+  const hasStrongOverlap = overlap.some((token) => token.length >= 5);
+
+  if (overlap.length >= 4 && overlapScore >= 0.55 && hasStrongOverlap) {
+    return { quality: "high" };
+  }
+
+  if (overlap.length >= 3 && overlapScore >= 0.45 && hasStrongOverlap) {
+    return {
+      quality: "medium",
+      warning: `Producto similar detectado, revisar equivalencia: ${displayProductName(candidateDescription)} contra ${shortBaseName(
+        baseDescription
+      )}.`
+    };
+  }
+
+  return { quality: "none" };
+}
+
 export function getStrongModelCode(description: string) {
   const attributes = extractProductAttributes(description);
   return attributes.codes[0];
@@ -105,7 +166,7 @@ export function compareToBaseItem(baseItem: ExtractedQuoteItem, candidate: Extra
   }
 
   if (!base.family || !candidateAttributes.family || base.family !== candidateAttributes.family) {
-    return { quality: "none" };
+    return genericTokenMatch(baseItem.description, candidate.description);
   }
 
   if (base.brand && candidateAttributes.brand && base.brand !== candidateAttributes.brand) {

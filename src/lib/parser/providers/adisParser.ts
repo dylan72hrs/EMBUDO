@@ -188,7 +188,9 @@ function parseAdisTable(region: string[], currency: Currency) {
       unitPrice,
       total,
       currency,
-      0.88
+      0.88,
+      `${rowBody.trim()} ${match.unitPriceText} ${match.totalText}`.trim(),
+      "parser especifico ADIS"
     );
     if (item) items.push(item);
     cursor = match.end;

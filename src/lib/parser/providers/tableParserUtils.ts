@@ -41,20 +41,26 @@ export function buildItem(
   unitPrice: number | null,
   total: number | null,
   currency: Currency,
-  confidence: number
+  confidence: number,
+  rawLine?: string,
+  extractionMethod = "parser especifico"
 ): ExtractedQuoteItem | null {
   const cleanDescription = description.replace(/\s+/g, " ").trim();
   if (!cleanDescription || (unitPrice === null && total === null)) return null;
+  if (!Number.isFinite(quantity) || quantity <= 0) return null;
 
   return {
     sourceItem,
     description: cleanDescription,
     normalizedProductKey: normalizeProductName(cleanDescription),
-    quantity: Number.isFinite(quantity) && quantity > 0 ? quantity : 1,
+    quantity,
     unit: "CU",
     currency,
     unitPrice,
     total,
+    rawLine,
+    rawBlock: rawLine,
+    extractionMethod,
     confidence
   };
 }

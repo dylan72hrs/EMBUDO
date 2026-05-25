@@ -1,11 +1,66 @@
 import { detectCurrency, detectCurrencyForLine } from "@/lib/parser/detectCurrency";
 import { parseMoney } from "@/lib/parser/parseMoney";
 import { normalizeProductName } from "@/lib/normalize/normalizeProductName";
-import { findRegion, linesOf } from "@/lib/parser/providers/tableParserUtils";
-import type { ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
+import { linesOf, normalizeForSearch } from "@/lib/parser/providers/tableParserUtils";
+import type { Currency, ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
+
+type ParsedLineResult = {
+  item?: ExtractedQuoteItem;
+  warnings: string[];
+};
+
+type MoneyToken = {
+  raw: string;
+  value: number;
+  index: number;
+  end: number;
+  hasCurrencyMarker: boolean;
+};
+
+const HEADER_PATTERNS = [
+  /descripcion.*cant.*(?:unitario|precio|valor).*total/,
+  /producto.*cant.*(?:unitario|precio|valor).*total/,
+  /detalle.*cant.*(?:unitario|precio|valor).*total/,
+  /articulo.*cant.*(?:unitario|precio|valor).*total/,
+  /glosa.*cant.*(?:unitario|precio|valor).*total/,
+  /codigo.*descripcion.*(?:und|uni|um|u\/m).*cant.*(?:precio|valor)/
+];
+
+const HARD_STOP_PATTERNS = [
+  /^total\s*(?:neto|general|cotizacion|pagar)?\b/,
+  /^sub\s*total\b/,
+  /^subtotal\b/,
+  /^neto\b/,
+  /^iva\b/,
+  /^i\.?v\.?a\b/,
+  /^ila\b/,
+  /^ahorro\b/,
+  /^observaciones?\b/,
+  /^firma\b/,
+  /^pagina\b/,
+  /^ejecutivo\b/,
+  /^telefono\b/,
+  /^fono\b/,
+  /^mail\b/,
+  /^email\b/,
+  /^direccion\b/,
+  /^rut\b/,
+  /^cliente\b/,
+  /^condici[oó]n\b/,
+  /^forma de pago\b/,
+  /^fecha\b/,
+  /^vencimiento\b/,
+  /^validez\b/,
+  /^banco\b/
+];
+
+const LOGISTIC_PATTERNS = /\b(cobro logistico|cobro logístico|flete|despacho|envio|envío|transporte)\b/i;
+const MONEY_PATTERN =
+  /(?:US\$|USD|CLP|\$)\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d+[.,]\d{2}/gi;
+const UNIT_TOKENS = "(?:CU|UN|UND|UNI|U/M|UM|EA|PCS?|UNIDADES?)";
 
 function extractQuoteNumber(text: string) {
-  return text.match(/(?:cotizaci[oó]n|quote|presupuesto|n[°o]\.?)[^\d]{0,12}([A-Z0-9-]{4,})/i)?.[1];
+  return text.match(/(?:cotizaci[oó]n|quote|presupuesto|n[°ºo]\.?)[^\d]{0,12}([A-Z0-9-]{4,})/i)?.[1];
 }
 
 function extractDate(text: string) {
@@ -17,87 +72,251 @@ function extractDate(text: string) {
 }
 
 function extractField(text: string, label: string) {
-  const regex = new RegExp(`${label}\\s*:?\\s*([^\n\r]+)`, "i");
+  const regex = new RegExp(`${label}\\s*:?\\s*([^\\n\\r]+)`, "i");
   return text.match(regex)?.[1]?.trim();
+}
+
+function isSummaryOrMetadataLine(line: string) {
+  const normalized = normalizeForSearch(line);
+  return HARD_STOP_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function hasTableHeader(line: string) {
+  const normalized = normalizeForSearch(line);
+  return HEADER_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function parseQuantity(value: string) {
+  const normalized = value.replace(",", ".");
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeUnit(value?: string) {
+  if (!value) return "CU";
+  const normalized = value.replace("/", "").toUpperCase();
+  if (["UN", "UND", "UNI", "UNIDADES"].includes(normalized)) return "CU";
+  if (["UM", "U/M"].includes(value.toUpperCase())) return "CU";
+  return "CU";
+}
+
+function extractMoneyTokens(line: string, documentCurrency: Currency): MoneyToken[] {
+  const matches = [...line.matchAll(MONEY_PATTERN)];
+  return matches
+    .map((match) => {
+      const raw = match[0];
+      const value = parseMoney(raw);
+      const hasCurrencyMarker = /US\$|USD|CLP|\$/i.test(raw);
+
+      if (value === null || match.index === undefined) return null;
+      if (!hasCurrencyMarker && documentCurrency === "UNKNOWN") return null;
+
+      return {
+        raw,
+        value,
+        index: match.index,
+        end: match.index + raw.length,
+        hasCurrencyMarker
+      };
+    })
+    .filter((token): token is MoneyToken => token !== null);
+}
+
+function parseQuantityTail(beforeAmounts: string) {
+  const unitBeforeQuantity = beforeAmounts.match(
+    new RegExp(`^(?<body>.+?)\\s+(?<unit>${UNIT_TOKENS})\\s+(?<qty>\\d+(?:[.,]\\d+)?)\\s*$`, "i")
+  );
+  if (unitBeforeQuantity?.groups) {
+    const quantity = parseQuantity(unitBeforeQuantity.groups.qty);
+    if (quantity) {
+      return {
+        beforeQuantity: unitBeforeQuantity.groups.body.trim(),
+        quantity,
+        unit: normalizeUnit(unitBeforeQuantity.groups.unit)
+      };
+    }
+  }
+
+  const quantityBeforeUnit = beforeAmounts.match(
+    new RegExp(`^(?<body>.+?)\\s+(?<qty>\\d+(?:[.,]\\d+)?)\\s*(?<unit>${UNIT_TOKENS})\\s*$`, "i")
+  );
+  if (quantityBeforeUnit?.groups) {
+    const quantity = parseQuantity(quantityBeforeUnit.groups.qty);
+    if (quantity) {
+      return {
+        beforeQuantity: quantityBeforeUnit.groups.body.trim(),
+        quantity,
+        unit: normalizeUnit(quantityBeforeUnit.groups.unit)
+      };
+    }
+  }
+
+  const quantityOnly = beforeAmounts.match(/^(?<body>.+\D)\s+(?<qty>\d+(?:[.,]\d+)?)\s*$/);
+  if (quantityOnly?.groups) {
+    const quantity = parseQuantity(quantityOnly.groups.qty);
+    if (quantity) {
+      return {
+        beforeQuantity: quantityOnly.groups.body.trim(),
+        quantity,
+        unit: "CU"
+      };
+    }
+  }
+
+  return null;
+}
+
+function splitSourceAndDescription(value: string) {
+  const compact = value.replace(/\s+/g, " ").trim();
+  const sourceMatch = compact.match(/^([A-Z0-9][A-Z0-9._/-]{2,})\s+(.+)$/i);
+  if (!sourceMatch) {
+    return { description: compact };
+  }
+
+  const candidate = sourceMatch[1];
+  const hasCodeEvidence = /\d/.test(candidate) || /[-_/]/.test(candidate);
+  if (!hasCodeEvidence) {
+    return { description: compact };
+  }
+
+  return {
+    sourceItem: candidate,
+    description: sourceMatch[2].trim()
+  };
+}
+
+function toleranceFor(currency: Currency, expected: number) {
+  if (currency === "CLP") return Math.max(2, expected * 0.002);
+  return Math.max(0.05, expected * 0.002);
 }
 
 function parseItemLine(
   line: string,
-  documentCurrency: ReturnType<typeof detectCurrency>
-): ExtractedQuoteItem | null {
-  const moneyMatches = [...line.matchAll(/(?:US\$|USD|CLP|\$)?\s*\d[\d.,]*(?:\s*(?:USD|CLP))?/gi)];
-  if (moneyMatches.length < 2) return null;
+  documentCurrency: Currency,
+  inTableRegion: boolean
+): ParsedLineResult {
+  const warnings: string[] = [];
+  const normalizedLine = line.replace(/\s+/g, " ").trim();
+  if (!normalizedLine || isSummaryOrMetadataLine(normalizedLine)) return { warnings };
 
-  const unitPriceText = moneyMatches[moneyMatches.length - 2]?.[0] ?? "";
-  const totalText = moneyMatches[moneyMatches.length - 1]?.[0] ?? "";
-  const unitPrice = parseMoney(unitPriceText);
-  const total = parseMoney(totalText);
-  if (unitPrice === null && total === null) return null;
+  if (LOGISTIC_PATTERNS.test(normalizedLine)) {
+    if (extractMoneyTokens(normalizedLine, documentCurrency).length > 0) {
+      warnings.push(`Costo asociado detectado y omitido de productos comparables: ${normalizedLine}`);
+    }
+    return { warnings };
+  }
 
-  const beforeAmounts = line.slice(0, moneyMatches[moneyMatches.length - 2].index).trim();
-  const sourceMatch = beforeAmounts.match(/^\s*(\d+)[.)-]?\s+/);
-  const sourceItem = sourceMatch?.[1];
-  const withoutSource = sourceMatch ? beforeAmounts.slice(sourceMatch[0].length).trim() : beforeAmounts;
-  const qtyMatch = withoutSource.match(/\s(\d+(?:[.,]\d+)?)\s*(?:CU|UN|UND|UNID|EA|PCS?)?\s*$/i);
-  const quantity = qtyMatch ? Number(qtyMatch[1].replace(",", ".")) : 1;
-  const description = (qtyMatch ? withoutSource.slice(0, qtyMatch.index).trim() : withoutSource).replace(/\s{2,}/g, " ");
+  const moneyTokens = extractMoneyTokens(normalizedLine, documentCurrency);
+  if (moneyTokens.length === 0) return { warnings };
+  if (moneyTokens.length === 1 && !inTableRegion) return { warnings };
 
-  if (description.length < 4) return null;
+  const unitToken = moneyTokens.length >= 2 ? moneyTokens.at(-2) : moneyTokens.at(-1);
+  const totalToken = moneyTokens.length >= 2 ? moneyTokens.at(-1) : undefined;
+  if (!unitToken) return { warnings };
+
+  const beforeAmounts = normalizedLine.slice(0, unitToken.index).trim();
+  const parsedQuantity = parseQuantityTail(beforeAmounts);
+  if (!parsedQuantity) {
+    warnings.push(`Linea omitida porque no se pudo detectar cantidad con seguridad: ${normalizedLine}`);
+    return { warnings };
+  }
+
+  const parsedDescription = splitSourceAndDescription(parsedQuantity.beforeQuantity);
+  const description = parsedDescription.description.replace(/\s+/g, " ").trim();
+  if (description.length < 4 || isSummaryOrMetadataLine(description)) return { warnings };
+
+  const currency = detectCurrencyForLine(normalizedLine, documentCurrency);
+  if (currency === "UNKNOWN") {
+    warnings.push(`Linea omitida porque no se pudo determinar moneda con seguridad: ${normalizedLine}`);
+    return { warnings };
+  }
+
+  const unitPrice = unitToken.value;
+  let total = totalToken?.value ?? null;
+  const expectedTotal = unitPrice * parsedQuantity.quantity;
+  let confidence = totalToken ? 0.78 : 0.62;
+  let originalTotal: number | null | undefined;
+
+  if (total === null) {
+    total = expectedTotal;
+    warnings.push(`Total calculado porque no venia explicito en PDF para producto ${description}.`);
+  } else if (Math.abs(total - expectedTotal) > toleranceFor(currency, expectedTotal)) {
+    originalTotal = total;
+    total = expectedTotal;
+    confidence = 0.66;
+    warnings.push(`Total corregido por inconsistencia matematica en producto ${description}.`);
+  }
 
   return {
-    sourceItem,
-    description,
-    normalizedProductKey: normalizeProductName(description),
-    quantity,
-    unit: "CU",
-    currency: detectCurrencyForLine(line, documentCurrency),
-    unitPrice,
-    total,
-    confidence: 0.45
+    item: {
+      sourceItem: parsedDescription.sourceItem,
+      description,
+      normalizedProductKey: normalizeProductName(description),
+      quantity: parsedQuantity.quantity,
+      unit: parsedQuantity.unit,
+      currency,
+      unitPrice,
+      total,
+      rawLine: normalizedLine,
+      rawBlock: normalizedLine,
+      extractionMethod: "parser generico estructural",
+      originalTotal,
+      confidence
+    },
+    warnings
+  };
+}
+
+function collectCandidateLines(text: string) {
+  const lines = linesOf(text);
+  const headerIndex = lines.findIndex(hasTableHeader);
+  if (headerIndex === -1) {
+    return {
+      lines,
+      hasHeader: false
+    };
+  }
+
+  const region: string[] = [];
+  for (const line of lines.slice(headerIndex + 1)) {
+    if (isSummaryOrMetadataLine(line)) break;
+    region.push(line);
+  }
+
+  return {
+    lines: region.length > 0 ? region : lines,
+    hasHeader: true
   };
 }
 
 export function parseWithGenericParser(text: string, supplierName: string): ParsedQuote {
   const documentCurrency = detectCurrency(text);
   const warnings: string[] = [];
-  const region = findRegion(
-    linesOf(text),
-    [
-      /item.*descripcion.*cantidad.*precio.*total/,
-      /item.*producto.*cantidad.*precio.*total/,
-      /descripcion.*cantidad.*unitario.*total/
-    ],
-    [
-      /^total neto/,
-      /^iva\b/,
-      /^total$/,
-      /^total pagar/,
-      /^condiciones comerciales/,
-      /^observaciones/,
-      /^fono/,
-      /^email/,
-      /^www\./,
-      /^banco/,
-      /^rut/
-    ]
-  );
+  const { lines, hasHeader } = collectCandidateLines(text);
+  const items: ExtractedQuoteItem[] = [];
+  const seenEvidence = new Set<string>();
 
-  if (region.length === 0) {
-    warnings.push("No se detectó una tabla de productos válida.");
+  for (const line of lines) {
+    const parsed = parseItemLine(line, documentCurrency, hasHeader);
+    warnings.push(...parsed.warnings);
+    if (!parsed.item) continue;
+    if (seenEvidence.has(parsed.item.rawLine ?? parsed.item.description)) continue;
+    seenEvidence.add(parsed.item.rawLine ?? parsed.item.description);
+    items.push(parsed.item);
   }
 
-  const items = region
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => parseItemLine(line, documentCurrency))
-    .filter((item): item is ExtractedQuoteItem => item !== null);
+  if (!hasHeader) {
+    warnings.push("No se detecto encabezado de tabla; se aplico lectura estructural conservadora.");
+  }
 
-  if (documentCurrency === "UNKNOWN") {
+  if (documentCurrency === "UNKNOWN" && items.length === 0) {
     warnings.push(`No se pudo detectar moneda para ${supplierName}.`);
   }
 
   if (items.length === 0) {
-    warnings.push(`No se detectaron líneas de productos para ${supplierName}; revisar parser.`);
+    warnings.push(
+      "Cotizacion detectada, pero no se pudo leer la tabla con seguridad: faltan datos verificables de cantidad, precio, total o moneda."
+    );
   }
 
   return {

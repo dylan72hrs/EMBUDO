@@ -9,6 +9,10 @@ type UnsafeItem = {
   currency?: unknown;
   unitPrice?: unknown;
   total?: unknown;
+  rawLine?: unknown;
+  rawBlock?: unknown;
+  extractionMethod?: unknown;
+  originalTotal?: unknown;
   confidence?: unknown;
 };
 
@@ -40,7 +44,7 @@ function toPositiveQuantity(value: unknown) {
     return value;
   }
 
-  return 1;
+  return null;
 }
 
 function toConfidence(value: unknown) {
@@ -77,6 +81,7 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
     const originalTotal = rawItem.total;
     const unitPrice = toNullablePrice(originalUnitPrice);
     const total = toNullablePrice(originalTotal);
+    const quantity = toPositiveQuantity(rawItem.quantity);
 
     if (unitPrice === null && typeof originalUnitPrice === "number") {
       warnings.push(`${warningPrefix(supplierName, index)}: precio unitario inválido corregido a vacío.`);
@@ -91,6 +96,11 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
       continue;
     }
 
+    if (quantity === null) {
+      warnings.push(`${warningPrefix(supplierName, index)} descartado: no tiene cantidad valida con evidencia.`);
+      continue;
+    }
+
     items.push({
       sourceItem:
         typeof rawItem.sourceItem === "string" || typeof rawItem.sourceItem === "number"
@@ -99,11 +109,15 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
       description,
       normalizedProductKey:
         toOptionalString(rawItem.normalizedProductKey) ?? normalizeProductName(description),
-      quantity: toPositiveQuantity(rawItem.quantity),
+      quantity,
       unit: toOptionalString(rawItem.unit) ?? "CU",
       currency: toCurrency(rawItem.currency),
       unitPrice,
       total,
+      rawLine: toOptionalString(rawItem.rawLine),
+      rawBlock: toOptionalString(rawItem.rawBlock),
+      extractionMethod: toOptionalString(rawItem.extractionMethod),
+      originalTotal: toNullablePrice(rawItem.originalTotal),
       confidence: toConfidence(rawItem.confidence)
     });
   }

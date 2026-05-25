@@ -80,7 +80,9 @@ export function parseTecnoMercadoQuote(text: string): ParsedQuote {
       parsed.unitPrice,
       parsed.total,
       "CLP",
-      0.9
+      0.9,
+      segment,
+      "parser especifico Tecno Mercado"
     );
     if (item) items.push(item);
   }

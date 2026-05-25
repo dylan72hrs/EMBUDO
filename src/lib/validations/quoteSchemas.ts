@@ -11,6 +11,10 @@ export const ExtractedQuoteItemSchema = z.object({
   currency: CurrencySchema,
   unitPrice: z.number().nonnegative().nullable(),
   total: z.number().nonnegative().nullable(),
+  rawLine: z.string().optional(),
+  rawBlock: z.string().optional(),
+  extractionMethod: z.string().optional(),
+  originalTotal: z.number().nonnegative().nullable().optional(),
   confidence: z.number().min(0).max(1).default(0.5)
 });
 
