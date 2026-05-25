@@ -22,7 +22,8 @@ const UNIT_HEADERS = ["unidad", "und", "um", "u/m", "uni"];
 const CODE_HEADERS = ["codigo", "cod", "sku", "ref", "item"];
 
 const SUMMARY_LINE = /\b(total neto|subtotal|iva|ila|total general|total pagar|condicion de pago|observacion|nota legal)\b/i;
-const LOGISTIC_LINE = /\b(cobro logistico|cobro logístico|flete|despacho|envio|envío|transporte)\b/i;
+const LOGISTIC_LINE =
+  /\b(cobro logistico|cobro logístico|logistica|logistico|flete|despacho|envio|envío|transporte|cargo despacho|cargo por despacho|costo despacho|costo de envio|costos de envio|servicio de entrega|delivery|shipping|freight|handling)\b/i;
 
 function normalize(value: string) {
   return value

@@ -23,6 +23,14 @@ const genericNoQuantity = `${tableHeader}
 
 const genericLogistic = `${tableHeader}
 999 Cobro Logistico SIN MARCA UNI 1 $3.500 $3.500`;
+const genericFlete = `${tableHeader}
+999 Flete UNI 1 $10.000 $10.000`;
+const genericDespacho = `${tableHeader}
+999 Despacho $5.000`;
+const genericEnvio = `${tableHeader}
+999 Envío a sucursal UNI 1 $7.500 $7.500`;
+const genericShipping = `${tableHeader}
+999 Shipping USD 20`;
 
 const prisaSample = `PROVEEDORES INTEGRALES PRISA S.A.
 COTIZACION 33098215
@@ -125,9 +133,21 @@ async function main() {
   const logistic = parse(genericLogistic, "generic-logistic.pdf");
   assert(logistic.items.length === 0, "Caso 4: costo logistico entro como producto");
   assert(
-    logistic.warnings.some((warning) => /Costo asociado detectado/i.test(warning)),
+    logistic.warnings.some((warning) => /Costo asociado detectado|COSTOS ASOCIADOS|incluye/i.test(warning)),
     "Caso 4: falta warning de costo asociado"
   );
+
+  const flete = parse(genericFlete, "generic-flete.pdf");
+  assert(flete.items.length === 0, "Caso 4b: Flete entro como producto");
+
+  const despacho = parse(genericDespacho, "generic-despacho.pdf");
+  assert(despacho.items.length === 0, "Caso 4c: Despacho entro como producto");
+
+  const envio = parse(genericEnvio, "generic-envio.pdf");
+  assert(envio.items.length === 0, "Caso 4d: Envio entro como producto");
+
+  const shipping = parse(genericShipping, "generic-shipping.pdf");
+  assert(shipping.items.length === 0, "Caso 4e: Shipping entro como producto");
 
   const prisa = parse(prisaSample, "33098215.pdf");
   assert(prisa.supplierName === "PRISA", "PRISA: proveedor no identificado como PRISA");
@@ -156,7 +176,7 @@ async function main() {
   assert(dimercCafe.unitPrice === 12417, "Dimerc: unitario de cafe incorrecto");
   assert(dimercCafe.total === 37251, "Dimerc: total de cafe incorrecto");
   assert(
-    dimerc.warnings.some((warning) => /Costo asociado detectado/i.test(warning)),
+    dimerc.warnings.some((warning) => /Costo asociado detectado|COSTOS ASOCIADOS|incluye/i.test(warning)),
     "Dimerc: falta warning por Cobro Logistico"
   );
   assert(

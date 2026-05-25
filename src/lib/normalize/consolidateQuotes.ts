@@ -14,9 +14,13 @@ import type {
 } from "@/lib/validations/quoteSchemas";
 
 const SUPPLIER_ORDER = ["Echave Turri", "ADIS", "Tecno Mercado"];
-const NON_PRODUCT_PATTERN =
-  /\b(cobro log[ií]stico|flete|despacho|env[ií]o|transporte|subtotal|total neto|total general|iva|ila|condici[oó]n de pago|observaciones?)\b/i;
-const ASSOCIATED_COST_PATTERN = /\b(cobro log[ií]stico|flete|despacho|env[ií]o|transporte|shipping|freight)\b/i;
+const COST_KEYWORDS =
+  "(?:cobro log[ií]stico|log[ií]stica|logistico|logistica|flete|despacho|env[ií]o|transporte|cargo despacho|cargo por despacho|costo despacho|costo de env[ií]o|costos de env[ií]o|servicio de entrega|delivery|shipping|freight|handling)";
+const NON_PRODUCT_PATTERN = new RegExp(
+  `\\b(${COST_KEYWORDS}|subtotal|total neto|total general|iva|ila|condici[oó]n de pago|observaciones?)\\b`,
+  "i"
+);
+const ASSOCIATED_COST_PATTERN = new RegExp(`\\b${COST_KEYWORDS}\\b`, "i");
 
 type WorkingRow = {
   seedItem: ExtractedQuoteItem;
@@ -55,11 +59,13 @@ function extractAssociatedCostsFromWarnings(warnings: string[]) {
   for (const warning of warnings) {
     if (!ASSOCIATED_COST_PATTERN.test(warning)) continue;
 
+    const typeMatch = warning.match(/incluye\s+(.+?)\s+por\s+/i);
+    const normalizedType = typeMatch?.[1]?.trim() ?? "Costo asociado";
     const moneyMatch = warning.match(/(?:US\$|USD|CLP|\$)\s*\d[\d.,]*/i);
     const parsedAmount = moneyMatch ? parseMoney(moneyMatch[0]) : null;
     const label =
       typeof parsedAmount === "number" && Number.isFinite(parsedAmount)
-        ? `Costo asociado detectado: ${formatClp(parsedAmount)}`
+        ? `${normalizedType}: ${formatClp(parsedAmount)}`
         : warning.trim();
 
     if (!seen.has(label)) {

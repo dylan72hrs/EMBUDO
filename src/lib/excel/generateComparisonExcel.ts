@@ -103,6 +103,27 @@ function hasText(value?: string | null) {
   return typeof value === "string" && value.trim().length > 0;
 }
 
+function normalizeLabel(value: unknown) {
+  if (typeof value !== "string") return "";
+  return value
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function findRowByLabel(worksheet: ExcelJS.Worksheet, label: string, fallbackRow: number) {
+  const normalizedTarget = normalizeLabel(label);
+  for (let row = 1; row <= worksheet.rowCount; row += 1) {
+    const rowValues = worksheet.getRow(row).values;
+    const valuesArray = Array.isArray(rowValues) ? rowValues : [];
+    const hasLabel = valuesArray.some((value) => normalizeLabel(value) === normalizedTarget);
+    if (hasLabel) return row;
+  }
+  return fallbackRow;
+}
+
 function applyBlockBorders(worksheet: ExcelJS.Worksheet) {
   const mediumSide: Partial<ExcelJS.Border> = { style: "medium", color: { argb: "FF000000" } };
 
@@ -273,6 +294,7 @@ function writeAdditionalEvaluationData(
 
   const supplierEvaluations = additionalEvaluation.supplierEvaluations ?? [];
   const urgency = hasText(additionalEvaluation.urgency) ? additionalEvaluation.urgency?.trim() : undefined;
+  const associatedCostsRow = findRowByLabel(worksheet, "COSTOS ASOCIADOS", TEMPLATE_MAP.rows.associatedCosts);
 
   for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
     const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
@@ -305,7 +327,7 @@ function writeAdditionalEvaluationData(
     }
 
     if (associatedText) {
-      writeIfNotFormula(worksheet.getCell(TEMPLATE_MAP.rows.associatedCosts, block.unitPriceColumn), associatedText);
+      writeIfNotFormula(worksheet.getCell(associatedCostsRow, block.unitPriceColumn), associatedText);
     }
   }
 
@@ -374,6 +396,7 @@ export async function generateComparisonExcel(
 
   clearTemplateDynamicFields(worksheet);
   applyBlockBorders(worksheet);
+  const associatedCostsRow = findRowByLabel(worksheet, "COSTOS ASOCIADOS", TEMPLATE_MAP.rows.associatedCosts);
 
   if (hasText(options.folio)) {
     writeFolioCell(worksheet, options.folio as string);
@@ -392,7 +415,7 @@ export async function generateComparisonExcel(
       supplier.deliveryTime ?? null
     );
     writeIfNotFormula(
-      worksheet.getCell(TEMPLATE_MAP.rows.associatedCosts, block.totalColumn),
+      worksheet.getCell(associatedCostsRow, block.totalColumn),
       supplier.associatedCosts ?? null
     );
   }
