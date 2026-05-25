@@ -391,6 +391,10 @@ export async function generateComparisonExcel(
       worksheet.getCell(TEMPLATE_MAP.rows.deliveryTime, block.unitPriceColumn),
       supplier.deliveryTime ?? null
     );
+    writeIfNotFormula(
+      worksheet.getCell(TEMPLATE_MAP.rows.associatedCosts, block.totalColumn),
+      supplier.associatedCosts ?? null
+    );
   }
 
   for (const [index, item] of itemsToWrite.entries()) {

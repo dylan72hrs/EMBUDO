@@ -33,7 +33,8 @@ export const SupplierSummarySchema = z.object({
   name: z.string(),
   paymentCondition: z.string().optional(),
   deliveryTime: z.string().optional(),
-  credit: z.string().optional()
+  credit: z.string().optional(),
+  associatedCosts: z.string().optional()
 });
 
 export const SupplierOfferSchema = z.object({

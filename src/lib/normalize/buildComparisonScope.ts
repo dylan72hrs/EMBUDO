@@ -42,9 +42,6 @@ export function buildComparisonScope(quotes: ParsedQuote[]): ComparisonScope {
   return {
     baseSupplierName: baseQuote.supplierName,
     baseItems: baseQuote.items.filter(isBaseCandidate),
-    warnings:
-      baseQuote.supplierName === "Echave Turri"
-        ? []
-        : [`Se usó ${baseQuote.supplierName} como lista base porque Echave Turri no estaba disponible.`]
+    warnings: []
   };
 }

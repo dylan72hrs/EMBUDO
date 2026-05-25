@@ -51,7 +51,8 @@ const HARD_STOP_PATTERNS = [
   /^banco\b/
 ];
 
-const LOGISTIC_PATTERNS = /\b(cobro log[ií]stico|logistic|flete|despacho|envio|env[ií]o|transporte)\b/i;
+const LOGISTIC_PATTERNS =
+  /\b(cobro log[ií]stico|logistic|flete|despacho|envio|env[ií]o|transporte|costo de envio|costos de envio|shipping|freight)\b/i;
 const MONEY_PATTERN =
   /(?:US\$|USD|CLP|\$)\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d+[.,]\d{2}/gi;
 const UNIT_TOKENS = "(?:UND|UNI|UN|U|CU|BOL|CJA|PQT|PACK|PAR|SET|LT|ML|KG|GR|DP|UM|U/M|EA|PCS?|UNIDADES?)";

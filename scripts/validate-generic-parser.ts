@@ -1,4 +1,7 @@
+import ExcelJS from "exceljs";
 import { consolidateQuotes } from "../src/lib/normalize/consolidateQuotes";
+import { highlightBestPrices } from "../src/lib/excel/highlightBestPrices";
+import { TEMPLATE_MAP } from "../src/lib/excel/templateMap";
 import { parseQuoteFromText } from "../src/lib/parser/parseQuoteFromText";
 
 function assert(condition: unknown, message: string): asserts condition {
@@ -90,6 +93,16 @@ function approxEqual(a: number, b: number, tolerance = 2) {
   return Math.abs(a - b) <= tolerance;
 }
 
+function assertCellNoFill(cell: ExcelJS.Cell, message: string) {
+  assert(!cell.fill, message);
+}
+
+function assertCellFill(cell: ExcelJS.Cell, argb: string, message: string) {
+  const fill = cell.fill;
+  assert(fill && fill.type === "pattern" && fill.pattern === "solid", message);
+  assert(fill.fgColor?.argb === argb, `${message} (argb esperado ${argb}, actual ${fill.fgColor?.argb})`);
+}
+
 async function main() {
   const standard = parse(genericStandard, "generic-standard.pdf");
   assert(standard.items.length === 1, "Caso 1: no se extrajo la linea estandar");
@@ -171,6 +184,14 @@ async function main() {
     /producto extra no agregado a la comparacion/i.test(warning)
   );
   assert(!badWarning, "Consolidacion: existe warning legado de producto extra no agregado");
+  assert(
+    !comparison.warnings.some((warning) => /lista base|base provider|base quote|echave turri no estaba disponible/i.test(warning)),
+    "Consolidacion: se mostro warning tecnico de lista base"
+  );
+  assert(
+    !comparison.warnings.some((warning) => /valores usd convertidos|tipo de cambio automatico/i.test(warning)),
+    "Consolidacion: se mostro warning de conversion USD en caso 100% CLP"
+  );
 
   assertProductExistsInComparison(comparison.comparison, "PRISA", "ENDULZANTE IANSA CERO K");
   assertProductExistsInComparison(comparison.comparison, "PRISA", "GALLETA ARCOR MINI CONQUISTA");
@@ -207,8 +228,65 @@ async function main() {
     `Consolidacion: total cafe Dimerc esperado 37251, actual ${dimercCafeRow.offers.Dimerc.total}`
   );
 
+  const dimercSummary = comparison.suppliers.find((supplier) => supplier.name === "Dimerc");
+  assert(dimercSummary, "Consolidacion: falta resumen de proveedor Dimerc");
+  assert(
+    typeof dimercSummary.associatedCosts === "string" && dimercSummary.associatedCosts.length > 0,
+    "Consolidacion: Cobro Logistico no fue registrado como costo asociado del proveedor"
+  );
+
+  const workbook = new ExcelJS.Workbook();
+  const worksheet = workbook.addWorksheet("TEST");
+  const rowOne = TEMPLATE_MAP.productStartRow;
+  const rowTwo = TEMPLATE_MAP.productStartRow + 1;
+  const [blockA, blockB] = TEMPLATE_MAP.supplierBlocks;
+
+  worksheet.getCell(rowOne, blockA.unitPriceColumn).value = 1000;
+  worksheet.getCell(rowOne, blockA.totalColumn).value = 1000;
+  worksheet.getCell(rowOne, blockB.unitPriceColumn).value = null;
+  worksheet.getCell(rowOne, blockB.totalColumn).value = null;
+
+  worksheet.getCell(rowTwo, blockA.unitPriceColumn).value = 1200;
+  worksheet.getCell(rowTwo, blockA.totalColumn).value = 2400;
+  worksheet.getCell(rowTwo, blockB.unitPriceColumn).value = 900;
+  worksheet.getCell(rowTwo, blockB.totalColumn).value = 1800;
+
+  highlightBestPrices(
+    worksheet,
+    [
+      {
+        item: 1,
+        product: "Solo PRISA",
+        quantity: 1,
+        unit: "CU",
+        offers: {
+          PRISA: { currency: "CLP", unitPrice: 1000, total: 1000, confidence: 1 }
+        },
+        matchingWarnings: []
+      },
+      {
+        item: 2,
+        product: "PRISA vs Dimerc",
+        quantity: 2,
+        unit: "CU",
+        offers: {
+          PRISA: { currency: "CLP", unitPrice: 1200, total: 2400, confidence: 1 },
+          Dimerc: { currency: "CLP", unitPrice: 900, total: 1800, confidence: 1 }
+        },
+        matchingWarnings: []
+      }
+    ],
+    [{ name: "PRISA" }, { name: "Dimerc" }],
+    TEMPLATE_MAP
+  );
+
+  assertCellNoFill(worksheet.getCell(rowOne, blockA.unitPriceColumn), "Highlight: fila con una sola oferta no debe quedar verde");
+  assertCellNoFill(worksheet.getCell(rowOne, blockA.totalColumn), "Highlight: fila con una sola oferta no debe quedar roja/verde");
+  assertCellFill(worksheet.getCell(rowTwo, blockA.totalColumn), "FFFCE4D6", "Highlight: mayor total debe quedar rojo");
+  assertCellFill(worksheet.getCell(rowTwo, blockB.totalColumn), "FFE2F0D9", "Highlight: menor total debe quedar verde");
+
   console.log(
-    "OK generic parser + consolidation: PRISA=11, Dimerc=11 (logistico excluido), union global valida y sin descartes de productos validos."
+    "OK generic parser + consolidation + highlight: PRISA=11, Dimerc=11 (logistico excluido), union global valida y reglas de color correctas."
   );
 }
 

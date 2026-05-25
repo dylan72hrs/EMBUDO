@@ -41,6 +41,19 @@ function applyFill(cell: ExcelJS.Cell, fill: ExcelJS.Fill) {
   cell.fill = fill;
 }
 
+function isComparisonFill(fill: ExcelJS.Fill | undefined) {
+  if (!fill || fill.type !== "pattern" || fill.pattern !== "solid") return false;
+  if (!fill.fgColor?.argb) return false;
+  return fill.fgColor.argb === "FFE2F0D9" || fill.fgColor.argb === "FFFCE4D6";
+}
+
+function clearComparisonFill(cell: ExcelJS.Cell) {
+  if (hasFormula(cell) || !validPrice(cell.value)) return;
+  if (isComparisonFill(cell.fill)) {
+    cell.style = { ...cell.style, fill: undefined };
+  }
+}
+
 export function highlightBestPrices(
   worksheet: ExcelJS.Worksheet,
   comparison: ComparisonItem[],
@@ -65,12 +78,33 @@ export function highlightBestPrices(
       ];
     });
 
-    if (candidates.length === 0) continue;
+    const rowCells = candidates.flatMap((candidate) => [
+      worksheet.getCell(rowNumber, candidate.block.unitPriceColumn),
+      worksheet.getCell(rowNumber, candidate.block.totalColumn)
+    ]);
+
+    if (candidates.length < 2) {
+      for (const cell of rowCells) {
+        clearComparisonFill(cell);
+      }
+      continue;
+    }
 
     const lowest = Math.min(...candidates.map((candidate) => candidate.amount));
+    const highest = Math.max(...candidates.map((candidate) => candidate.amount));
 
     for (const candidate of candidates) {
-      const fill = candidate.amount === lowest ? WINNER_FILL : LOSER_FILL;
+      const fill =
+        candidate.amount === lowest
+          ? WINNER_FILL
+          : candidate.amount === highest
+            ? LOSER_FILL
+            : undefined;
+      if (!fill) {
+        clearComparisonFill(worksheet.getCell(rowNumber, candidate.block.unitPriceColumn));
+        clearComparisonFill(worksheet.getCell(rowNumber, candidate.block.totalColumn));
+        continue;
+      }
       applyFill(worksheet.getCell(rowNumber, candidate.block.unitPriceColumn), fill);
       applyFill(worksheet.getCell(rowNumber, candidate.block.totalColumn), fill);
     }
