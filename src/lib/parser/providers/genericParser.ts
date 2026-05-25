@@ -216,12 +216,8 @@ function parseItemLine(
 
   const beforeAmounts = normalizedLine.slice(0, unitToken.index).trim();
   const parsedQuantity = parseQuantityTail(beforeAmounts);
-  if (!parsedQuantity) {
-    warnings.push(`Linea omitida porque no se pudo detectar cantidad con seguridad: ${normalizedLine}`);
-    return { warnings };
-  }
 
-  const parsedDescription = splitSourceAndDescription(parsedQuantity.beforeQuantity);
+  const parsedDescription = splitSourceAndDescription(parsedQuantity?.beforeQuantity ?? beforeAmounts);
   const description = parsedDescription.description.replace(/\s+/g, " ").trim();
   if (description.length < 4 || isSummaryOrMetadataLine(description)) return { warnings };
 
@@ -232,8 +228,13 @@ function parseItemLine(
   }
 
   const unitPrice = unitToken.value;
+  const quantity = parsedQuantity?.quantity ?? 1;
+  const unit = parsedQuantity?.unit ?? "CU";
+  if (!parsedQuantity) {
+    warnings.push(`Cantidad asumida en 1 por falta de evidencia explicita para producto ${description}.`);
+  }
   let total = totalToken?.value ?? null;
-  const expectedTotal = unitPrice * parsedQuantity.quantity;
+  const expectedTotal = unitPrice * quantity;
   let confidence = totalToken ? 0.78 : 0.62;
   let originalTotal: number | null | undefined;
 
@@ -252,8 +253,8 @@ function parseItemLine(
       sourceItem: parsedDescription.sourceItem,
       description,
       normalizedProductKey: normalizeProductName(description),
-      quantity: parsedQuantity.quantity,
-      unit: parsedQuantity.unit,
+      quantity,
+      unit,
       currency,
       unitPrice,
       total,

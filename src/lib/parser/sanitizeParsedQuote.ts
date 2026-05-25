@@ -101,6 +101,13 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
       continue;
     }
 
+    const rawLine = toOptionalString(rawItem.rawLine);
+    const rawBlock = toOptionalString(rawItem.rawBlock);
+    if (!rawLine && !rawBlock) {
+      warnings.push(`${warningPrefix(supplierName, index)} descartado: sin evidencia de linea origen.`);
+      continue;
+    }
+
     items.push({
       sourceItem:
         typeof rawItem.sourceItem === "string" || typeof rawItem.sourceItem === "number"
@@ -114,8 +121,8 @@ export function sanitizeParsedQuote(parsed: UnsafeParsedQuote) {
       currency: toCurrency(rawItem.currency),
       unitPrice,
       total,
-      rawLine: toOptionalString(rawItem.rawLine),
-      rawBlock: toOptionalString(rawItem.rawBlock),
+      rawLine,
+      rawBlock,
       extractionMethod: toOptionalString(rawItem.extractionMethod),
       originalTotal: toNullablePrice(rawItem.originalTotal),
       confidence: toConfidence(rawItem.confidence)

@@ -2,8 +2,10 @@ import { access, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
-import { extractTextFromPdf } from "@/lib/pdf/extractTextFromPdf";
-import { parseQuoteFromText } from "@/lib/parser/parseQuoteFromText";
+import {
+  detectSupportedQuoteFileKind,
+  extractQuoteFromUploadedFile
+} from "@/lib/parser/extractQuoteFromUploadedFile";
 import { consolidateQuotes } from "@/lib/normalize/consolidateQuotes";
 import {
   generateComparisonExcel,
@@ -25,8 +27,8 @@ import type { ParsedQuote } from "@/lib/validations/quoteSchemas";
 
 export const runtime = "nodejs";
 
-const MAX_PDFS = 20;
-const MAX_PDF_SIZE = 20 * 1024 * 1024;
+const MAX_QUOTES = 20;
+const MAX_FILE_SIZE = 20 * 1024 * 1024;
 
 type DocumentKind = "quote" | "purchase_request" | "order" | "invoice" | "unknown";
 
@@ -39,8 +41,8 @@ type DocumentDiagnostic = {
   action: string;
 };
 
-function isPdf(file: File) {
-  return file.name.toLowerCase().endsWith(".pdf") || file.type === "application/pdf";
+function isSupportedQuoteFile(file: File) {
+  return detectSupportedQuoteFileKind(file.name, file.type) !== "unknown";
 }
 
 function parseQuoteDate(value?: string) {
@@ -97,9 +99,12 @@ function kindLabel(kind: DocumentKind) {
   return "Desconocido";
 }
 
-function invalidDocumentReason(kind: DocumentKind, looksLikeQuote: boolean) {
+function invalidDocumentReason(kind: DocumentKind, looksLikeQuote: boolean, lookedScanned: boolean) {
+  if (lookedScanned) {
+    return "El archivo parece una cotizacion, pero no contiene texto extraible. Puede ser un PDF escaneado o una imagen.";
+  }
   if (looksLikeQuote) {
-    return "El archivo parece una cotizacion, pero no se pudo leer correctamente la tabla de productos.";
+    return "Cotizacion detectada, pero el formato de tabla no pudo leerse con seguridad.";
   }
   if (kind === "purchase_request") {
     return "El documento contiene una solicitud de compra con valores internos, pero no una cotizacion de proveedor con estructura comparable.";
@@ -131,12 +136,17 @@ function userFacingWarnings(inputWarnings: string[]) {
   return [...new Set(mapped)];
 }
 
-function buildInvalidDiagnostic(filename: string, kind: DocumentKind, looksLikeQuote: boolean): DocumentDiagnostic {
+function buildInvalidDiagnostic(
+  filename: string,
+  kind: DocumentKind,
+  looksLikeQuote: boolean,
+  lookedScanned = false
+): DocumentDiagnostic {
   return {
     filename,
     typeDetected: kindLabel(kind),
     status: "omitted",
-    reason: invalidDocumentReason(kind, looksLikeQuote),
+    reason: invalidDocumentReason(kind, looksLikeQuote, lookedScanned),
     missing: [
       "Proveedor cotizante identificable",
       "Productos con cantidad",
@@ -144,8 +154,10 @@ function buildInvalidDiagnostic(filename: string, kind: DocumentKind, looksLikeQ
       "Total por item",
       "Moneda reconocible"
     ],
-    action: looksLikeQuote
-      ? "Revisa que el PDF no sea una imagen escaneada y que la tabla tenga productos, cantidades y precios visibles."
+    action: lookedScanned
+      ? "Sube un PDF con texto seleccionable o una cotizacion en Excel (XLSX/XLS)."
+      : looksLikeQuote
+      ? "Revise que el PDF tenga productos, cantidades, precio unitario, total y moneda visibles. Si el formato es nuevo, debe agregarse soporte al parser generico."
       : "Sube una cotizacion formal de proveedor (por ejemplo ADIS, Echave Turri o Tecno Mercado)."
   };
 }
@@ -282,7 +294,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           status: "error",
-          message: "Debes subir al menos una cotizacion PDF.",
+          message: "Debes subir al menos una cotizacion (PDF, XLSX, XLS o DOCX).",
           warnings,
           documentDiagnostics: diagnostics
         },
@@ -290,11 +302,11 @@ export async function POST(request: Request) {
       );
     }
 
-    if (quotes.length > MAX_PDFS) {
+    if (quotes.length > MAX_QUOTES) {
       return NextResponse.json(
         {
           status: "error",
-          message: `Maximo permitido: ${MAX_PDFS} PDFs.`,
+          message: `Maximo permitido: ${MAX_QUOTES} archivos.`,
           warnings,
           documentDiagnostics: diagnostics
         },
@@ -303,18 +315,18 @@ export async function POST(request: Request) {
     }
 
     for (const quote of quotes) {
-      if (!isPdf(quote)) {
+      if (!isSupportedQuoteFile(quote)) {
         return NextResponse.json(
           {
             status: "error",
-            message: `El archivo ${quote.name} no es PDF.`,
+            message: `El archivo ${quote.name} no tiene un formato soportado. Usa PDF, XLSX, XLS o DOCX.`,
             warnings,
             documentDiagnostics: diagnostics
           },
           { status: 400 }
         );
       }
-      if (quote.size > MAX_PDF_SIZE) {
+      if (quote.size > MAX_FILE_SIZE) {
         return NextResponse.json(
           {
             status: "error",
@@ -340,8 +352,8 @@ export async function POST(request: Request) {
 
     for (const quoteFile of quotes) {
       const filename = sanitizeFilename(quoteFile.name);
-      const pdfPath = path.join(jobPdfDir(activeJobId), filename);
-      await saveUploadedFile(quoteFile, pdfPath);
+      const uploadedPath = path.join(jobPdfDir(activeJobId), filename);
+      await saveUploadedFile(quoteFile, uploadedPath);
 
       const uploadedQuote = await prisma.uploadedQuote.create({
         data: {
@@ -353,16 +365,21 @@ export async function POST(request: Request) {
       });
 
       try {
-        const rawText = await extractTextFromPdf(pdfPath);
-        const parsed = parseQuoteFromText(rawText, quoteFile.name);
+        const extracted = await extractQuoteFromUploadedFile(uploadedPath, quoteFile.name, quoteFile.type);
+        const parsed = extracted.parsed;
+        const rawText = extracted.rawText;
         const kind = classifyUploadedDocument(rawText);
-        const looksLikeQuote = kind === "quote" || /cotiz/i.test(rawText);
+        const looksLikeQuote = extracted.quoteLike || kind === "quote" || /cotiz/i.test(rawText);
 
         if (parsed.items.length === 0) {
           omittedInvalidCount += 1;
-          diagnostics.push(buildInvalidDiagnostic(quoteFile.name, kind, looksLikeQuote));
+          diagnostics.push(
+            buildInvalidDiagnostic(quoteFile.name, kind, looksLikeQuote, extracted.lookedScanned)
+          );
           warnings.push(
-            looksLikeQuote
+            extracted.lookedScanned
+              ? `Se omitio ${quoteFile.name}: el archivo parece una cotizacion escaneada o imagen sin texto extraible.`
+              : looksLikeQuote
               ? `Se omitio ${quoteFile.name}: cotizacion detectada, pero no se pudo leer la tabla con seguridad.`
               : `Se omitio ${quoteFile.name}: este archivo no parece ser una cotizacion valida.`
           );
@@ -376,7 +393,9 @@ export async function POST(request: Request) {
               rawText,
               parsedJson: JSON.stringify(parsed),
               status: "partial_error",
-              errorMessage: "Archivo omitido: no parece cotizacion valida."
+              errorMessage: extracted.lookedScanned
+                ? "Archivo omitido: cotizacion escaneada sin texto extraible."
+                : "Archivo omitido: no se pudo interpretar la tabla de cotizacion."
             }
           });
 
@@ -430,13 +449,13 @@ export async function POST(request: Request) {
           typeDetected: "Desconocido",
           status: "omitted",
           reason:
-            "El archivo no pudo leerse correctamente como cotizacion. Puede estar escaneado como imagen o sin texto util.",
+            "El archivo no pudo leerse correctamente como cotizacion. Puede estar escaneado, sin texto util o en un formato no interpretable.",
           missing: [
-            "Texto legible en PDF",
+            "Texto legible o tabla estructurada",
             "Tabla de productos con cantidad y precios",
             "Moneda reconocible"
           ],
-          action: "Sube una cotizacion de proveedor con texto seleccionable y tabla visible."
+          action: "Sube una cotizacion de proveedor con texto seleccionable o una planilla de cotizacion estructurada."
         });
         warnings.push(`Se omitio ${quoteFile.name}: no fue posible interpretarlo como cotizacion valida.`);
         await prisma.uploadedQuote.update({
