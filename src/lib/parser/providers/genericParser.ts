@@ -10,11 +10,8 @@ type ParsedLineResult = {
 };
 
 type MoneyToken = {
-  raw: string;
   value: number;
   index: number;
-  end: number;
-  hasCurrencyMarker: boolean;
 };
 
 const HEADER_PATTERNS = [
@@ -54,10 +51,10 @@ const HARD_STOP_PATTERNS = [
   /^banco\b/
 ];
 
-const LOGISTIC_PATTERNS = /\b(cobro logistico|cobro logístico|flete|despacho|envio|envío|transporte)\b/i;
+const LOGISTIC_PATTERNS = /\b(cobro log[ií]stico|logistic|flete|despacho|envio|env[ií]o|transporte)\b/i;
 const MONEY_PATTERN =
   /(?:US\$|USD|CLP|\$)\s*\d[\d.,]*|\d{1,3}(?:[.,]\d{3})+(?:[.,]\d{2})?|\d+[.,]\d{2}/gi;
-const UNIT_TOKENS = "(?:UND|UNI|UN|U|CU|BOL|CJA|PQT|PACK|PAR|SET|LT|ML|KG|GR|UM|U/M|EA|PCS?|UNIDADES?)";
+const UNIT_TOKENS = "(?:UND|UNI|UN|U|CU|BOL|CJA|PQT|PACK|PAR|SET|LT|ML|KG|GR|DP|UM|U/M|EA|PCS?|UNIDADES?)";
 
 function extractQuoteNumber(text: string) {
   return text.match(/(?:cotizaci[oó]n|quote|presupuesto|n[°ºo]\.?)[^\d]{0,12}([A-Z0-9-]{4,})/i)?.[1];
@@ -94,10 +91,17 @@ function parseQuantity(value: string) {
 
 function normalizeUnit(value?: string) {
   if (!value) return "CU";
-  const normalized = value.replace("/", "").toUpperCase();
-  if (["UN", "UND", "UNI", "UNIDADES"].includes(normalized)) return "CU";
-  if (["UM", "U/M"].includes(value.toUpperCase())) return "CU";
-  return "CU";
+  const normalized = value.replace("/", "").toUpperCase().trim();
+  if (["UN", "UND", "UNI", "UNIDADES", "UM", "U/M"].includes(normalized)) return "CU";
+  return normalized;
+}
+
+function cleanDescriptionTokens(value: string) {
+  return value
+    .replace(/\b(ML|GR|KG|LT|CC)([A-ZÁÉÍÓÚÑ])/g, "$1 $2")
+    .replace(/\b(UNI|UND|CU|PQT|BOL|CJA|DP)([A-ZÁÉÍÓÚÑ])/g, "$1 $2")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 function extractMoneyTokens(line: string, documentCurrency: Currency): MoneyToken[] {
@@ -107,17 +111,9 @@ function extractMoneyTokens(line: string, documentCurrency: Currency): MoneyToke
       const raw = match[0];
       const value = parseMoney(raw);
       const hasCurrencyMarker = /US\$|USD|CLP|\$/i.test(raw);
-
       if (value === null || match.index === undefined) return null;
       if (!hasCurrencyMarker && documentCurrency === "UNKNOWN") return null;
-
-      return {
-        raw,
-        value,
-        index: match.index,
-        end: match.index + raw.length,
-        hasCurrencyMarker
-      };
+      return { value, index: match.index };
     })
     .filter((token): token is MoneyToken => token !== null);
 }
@@ -151,18 +147,6 @@ function parseQuantityTail(beforeAmounts: string) {
     }
   }
 
-  const quantityOnly = beforeAmounts.match(/^(?<body>.+\D)\s+(?<qty>\d+(?:[.,]\d+)?)\s*$/);
-  if (quantityOnly?.groups) {
-    const quantity = parseQuantity(quantityOnly.groups.qty);
-    if (quantity) {
-      return {
-        beforeQuantity: quantityOnly.groups.body.trim(),
-        quantity,
-        unit: "CU"
-      };
-    }
-  }
-
   const compactUnitQuantity = beforeAmounts.match(
     new RegExp(`^(?<body>.+?)(?<unit>${UNIT_TOKENS})\\s*(?<qty>\\d+(?:[.,]\\d+)?)\\s*$`, "i")
   );
@@ -183,15 +167,11 @@ function parseQuantityTail(beforeAmounts: string) {
 function splitSourceAndDescription(value: string) {
   const compact = value.replace(/\s+/g, " ").trim();
   const sourceMatch = compact.match(/^([A-Z0-9][A-Z0-9._/-]{2,})\s+(.+)$/i);
-  if (!sourceMatch) {
-    return { description: compact };
-  }
+  if (!sourceMatch) return { description: compact };
 
   const candidate = sourceMatch[1];
   const hasCodeEvidence = /\d/.test(candidate) || /[-_/]/.test(candidate);
-  if (!hasCodeEvidence) {
-    return { description: compact };
-  }
+  if (!hasCodeEvidence) return { description: compact };
 
   return {
     sourceItem: candidate,
@@ -204,11 +184,7 @@ function toleranceFor(currency: Currency, expected: number) {
   return Math.max(0.05, expected * 0.002);
 }
 
-function parseItemLine(
-  line: string,
-  documentCurrency: Currency,
-  inTableRegion: boolean
-): ParsedLineResult {
+function parseItemLine(line: string, documentCurrency: Currency, inTableRegion: boolean): ParsedLineResult {
   const warnings: string[] = [];
   const normalizedLine = line.replace(/\s+/g, " ").trim();
   if (!normalizedLine || isSummaryOrMetadataLine(normalizedLine)) return { warnings };
@@ -236,7 +212,7 @@ function parseItemLine(
   }
 
   const parsedDescription = splitSourceAndDescription(parsedQuantity.beforeQuantity);
-  const description = parsedDescription.description.replace(/\s+/g, " ").trim();
+  const description = cleanDescriptionTokens(parsedDescription.description);
   if (description.length < 4 || isSummaryOrMetadataLine(description)) return { warnings };
 
   const currency = detectCurrencyForLine(normalizedLine, documentCurrency);

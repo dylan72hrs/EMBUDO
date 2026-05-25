@@ -13,6 +13,14 @@ import type {
 } from "@/lib/validations/quoteSchemas";
 
 const SUPPLIER_ORDER = ["Echave Turri", "ADIS", "Tecno Mercado"];
+const NON_PRODUCT_PATTERN =
+  /\b(cobro logistico|cobro logístico|flete|despacho|envio|envío|transporte|subtotal|total neto|total general|iva|ila|condicion de pago|observaciones?)\b/i;
+
+type WorkingRow = {
+  seedItem: ExtractedQuoteItem;
+  offers: ComparisonItem["offers"];
+  matchingWarnings: string[];
+};
 
 function supplierSort(a: SupplierSummary, b: SupplierSummary) {
   const aIndex = SUPPLIER_ORDER.indexOf(a.name);
@@ -39,6 +47,13 @@ function createSupplierSummaries(quotes: ParsedQuote[]) {
   return [...supplierMap.values()].sort(supplierSort);
 }
 
+function isComparableProduct(item: ExtractedQuoteItem) {
+  const description = item.description.toLowerCase();
+  if (NON_PRODUCT_PATTERN.test(description)) return false;
+  if (!item.rawLine && !item.rawBlock) return false;
+  return item.unitPrice !== null || item.total !== null;
+}
+
 function findBestOffer(
   baseItem: ExtractedQuoteItem,
   quote: ParsedQuote,
@@ -47,7 +62,7 @@ function findBestOffer(
   let best: { item: ExtractedQuoteItem; warning?: string; score: number } | undefined;
 
   for (const item of quote.items) {
-    if (usedItems.has(item)) continue;
+    if (usedItems.has(item) || !isComparableProduct(item)) continue;
     const match = compareToBaseItem(baseItem, item);
     const score = match.quality === "high" ? 2 : match.quality === "medium" ? 1 : 0;
 
@@ -57,14 +72,6 @@ function findBestOffer(
   }
 
   return best;
-}
-
-function extraWarning(supplierName: string, item: ExtractedQuoteItem) {
-  if (/aud[ií]fono|audifono|headset|jabra|razer|blackshark|h390|tune/i.test(item.description)) {
-    return `${supplierName}: ${displayProductName(item.description)} detectado como alternativa de audífono, no se agrega como fila nueva.`;
-  }
-
-  return `Producto extra no agregado a la comparación: ${displayProductName(item.description)} - proveedor ${supplierName}`;
 }
 
 function targetCurrency(): Currency {
@@ -148,15 +155,72 @@ function convertOfferToTarget(
     warnings.push(
       `${supplierName}: precios convertidos de ${item.currency} a ${target} usando tipo de cambio ${exchangeRateValue}.`
     );
-    return normalizeOfferTotals({
-      ...offer,
-      currency: target,
-      unitPrice: convertPrice(item.unitPrice, item.currency, target, exchangeRateValue),
-      total: convertPrice(item.total, item.currency, target, exchangeRateValue)
-    }, quantity);
+    return normalizeOfferTotals(
+      {
+        ...offer,
+        currency: target,
+        unitPrice: convertPrice(item.unitPrice, item.currency, target, exchangeRateValue),
+        total: convertPrice(item.total, item.currency, target, exchangeRateValue)
+      },
+      quantity
+    );
   }
 
   return normalizeOfferTotals(offer, quantity);
+}
+
+function attachQuoteOfferToRow(
+  row: WorkingRow,
+  quote: ParsedQuote,
+  usedBySupplier: Map<string, Set<ExtractedQuoteItem>>,
+  outputCurrency: Currency,
+  exchangeRate: number,
+  warnings: string[]
+) {
+  if (row.offers[quote.supplierName]) return;
+  const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
+  const best = findBestOffer(row.seedItem, quote, usedItems);
+  if (!best) return;
+
+  usedItems.add(best.item);
+  usedBySupplier.set(quote.supplierName, usedItems);
+  if (best.warning) row.matchingWarnings.push(`${quote.supplierName}: ${best.warning}`);
+
+  row.offers[quote.supplierName] = convertOfferToTarget(
+    quote.supplierName,
+    best.item,
+    outputCurrency,
+    row.seedItem.quantity,
+    exchangeRate,
+    warnings
+  );
+}
+
+function tryAttachUnmatchedItemToExistingRows(
+  rows: WorkingRow[],
+  supplierName: string,
+  item: ExtractedQuoteItem,
+  outputCurrency: Currency,
+  exchangeRate: number,
+  warnings: string[]
+) {
+  for (const row of rows) {
+    if (row.offers[supplierName]) continue;
+    const match = compareToBaseItem(row.seedItem, item);
+    if (match.quality === "none") continue;
+
+    row.offers[supplierName] = convertOfferToTarget(
+      supplierName,
+      item,
+      outputCurrency,
+      row.seedItem.quantity,
+      exchangeRate,
+      warnings
+    );
+    if (match.warning) row.matchingWarnings.push(`${supplierName}: ${match.warning}`);
+    return true;
+  }
+  return false;
 }
 
 export async function consolidateQuotes(
@@ -168,6 +232,7 @@ export async function consolidateQuotes(
   if (quotes.length === 1) {
     warnings.push("Solo se procesó una cotización válida; se generó tabla sin comparación entre proveedores.");
   }
+
   const suppliers = createSupplierSummaries(quotes);
   const usedBySupplier = new Map<string, Set<ExtractedQuoteItem>>();
   const outputCurrency = targetCurrency();
@@ -183,37 +248,90 @@ export async function consolidateQuotes(
     usedBySupplier.set(quote.supplierName, new Set<ExtractedQuoteItem>());
   }
 
-  const comparison: ComparisonItem[] = scope.baseItems.map((baseItem, index) => {
-    const offers: ComparisonItem["offers"] = {};
-    const matchingWarnings: string[] = [];
-    const quantity = comparisonQuantity(baseItem.quantity, index + 1, warnings);
+  const rows: WorkingRow[] = [];
+
+  for (const baseItem of scope.baseItems.filter(isComparableProduct)) {
+    const row: WorkingRow = {
+      seedItem: baseItem,
+      offers: {},
+      matchingWarnings: []
+    };
 
     for (const quote of quotes) {
-      const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
-      const best = findBestOffer(baseItem, quote, usedItems);
-      if (!best) continue;
+      attachQuoteOfferToRow(row, quote, usedBySupplier, outputCurrency, exchange.finalRate, warnings);
+    }
 
-      usedItems.add(best.item);
-      usedBySupplier.set(quote.supplierName, usedItems);
-      if (best.warning) matchingWarnings.push(`${quote.supplierName}: ${best.warning}`);
+    if (Object.keys(row.offers).length > 0) {
+      rows.push(row);
+    }
+  }
 
-      offers[quote.supplierName] = convertOfferToTarget(
+  for (const quote of quotes) {
+    const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
+
+    for (const item of quote.items) {
+      if (usedItems.has(item) || !isComparableProduct(item)) continue;
+
+      const attached = tryAttachUnmatchedItemToExistingRows(
+        rows,
         quote.supplierName,
-        best.item,
+        item,
         outputCurrency,
-        quantity,
         exchange.finalRate,
         warnings
       );
+      if (attached) {
+        usedItems.add(item);
+        continue;
+      }
+
+      const independentRow: WorkingRow = {
+        seedItem: item,
+        offers: {
+          [quote.supplierName]: convertOfferToTarget(
+            quote.supplierName,
+            item,
+            outputCurrency,
+            item.quantity,
+            exchange.finalRate,
+            warnings
+          )
+        },
+        matchingWarnings: [
+          `${quote.supplierName}: producto agregado como fila independiente porque no tuvo equivalente seguro.`
+        ]
+      };
+      usedItems.add(item);
+
+      for (const otherQuote of quotes) {
+        if (otherQuote.supplierName === quote.supplierName) continue;
+        attachQuoteOfferToRow(
+          independentRow,
+          otherQuote,
+          usedBySupplier,
+          outputCurrency,
+          exchange.finalRate,
+          warnings
+        );
+      }
+
+      rows.push(independentRow);
     }
 
+    usedBySupplier.set(quote.supplierName, usedItems);
+  }
+
+  const comparison: ComparisonItem[] = rows.map((row, index) => {
+    const itemNumber = index + 1;
+    const quantity = comparisonQuantity(row.seedItem.quantity, itemNumber, warnings);
+
     return {
-      item: index + 1,
-      product: displayProductName(baseItem.description),
+      item: itemNumber,
+      product: displayProductName(row.seedItem.description),
       quantity,
-      unit: baseItem.unit || "CU",
-      offers,
-      matchingWarnings
+      unit: row.seedItem.unit || "CU",
+      offers: row.offers,
+      matchingWarnings: row.matchingWarnings
     };
   });
 
@@ -221,13 +339,6 @@ export async function consolidateQuotes(
     const hasTargetCurrency = quote.items.some((item) => item.currency === outputCurrency);
     if (hasTargetCurrency) {
       warnings.push(`${quote.supplierName}: precios ya venían en ${outputCurrency}.`);
-    }
-
-    const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
-    for (const item of quote.items) {
-      if (!usedItems.has(item)) {
-        warnings.push(extraWarning(quote.supplierName, item));
-      }
     }
   }
 
