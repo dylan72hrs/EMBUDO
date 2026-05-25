@@ -274,22 +274,6 @@ export async function POST(request: Request) {
         { status: 400 }
       );
     }
-    if (
-      exchangeRateRequest.exchangeRateMarginClp !== undefined &&
-      exchangeRateRequest.exchangeRateMarginClp !== null &&
-      String(exchangeRateRequest.exchangeRateMarginClp).trim() !== "" &&
-      !/^\d+$/.test(String(exchangeRateRequest.exchangeRateMarginClp).trim())
-    ) {
-      return NextResponse.json(
-        {
-          status: "error",
-          message: "Margen adicional del dolar invalido.",
-          warnings,
-          documentDiagnostics: diagnostics
-        },
-        { status: 400 }
-      );
-    }
 
     await ensureStorageLayout();
     const officialTemplatePath = templateExcelPath();

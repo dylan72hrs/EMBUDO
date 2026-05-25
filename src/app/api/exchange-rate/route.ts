@@ -32,21 +32,6 @@ export async function GET(request: Request) {
       { status: 400 }
     );
   }
-  if (
-    exchangeRateRequest.exchangeRateMarginClp !== undefined &&
-    exchangeRateRequest.exchangeRateMarginClp !== null &&
-    String(exchangeRateRequest.exchangeRateMarginClp).trim() !== "" &&
-    !/^\d+$/.test(String(exchangeRateRequest.exchangeRateMarginClp).trim())
-  ) {
-    return NextResponse.json(
-      {
-        status: "error",
-        message: "Margen adicional del dolar invalido."
-      },
-      { status: 400 }
-    );
-  }
-
   const exchangeRate = await getExchangeRate(exchangeRateRequest);
   const warning = exchangeRate.warnings.find((item) =>
     item.toLowerCase().includes("no se pudo obtener dolar observado")
