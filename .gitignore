@@ -13,3 +13,4 @@ output/*
 !templates/.gitkeep
 .DS_Store
 tsconfig.tsbuildinfo
+*.log

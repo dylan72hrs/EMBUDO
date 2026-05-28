@@ -15,7 +15,6 @@ import {
 } from "@/lib/currency/getExchangeRate";
 import { buildPurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
 import {
-  detectSupportedExtractorFileKind,
   extractQuotesFromN8n,
   getN8nDiagnostics,
   mapN8nDocumentsToQuotes,
@@ -31,12 +30,17 @@ import {
   sanitizeFilename,
   templateExcelPath
 } from "@/lib/utils/fileStorage";
+import {
+  MAX_PDF_FILE_SIZE_BYTES,
+  MAX_PDF_FILE_SIZE_MB,
+  MAX_QUOTES,
+  MAX_TOTAL_UPLOAD_SIZE_BYTES,
+  MAX_TOTAL_UPLOAD_SIZE_MB
+} from "@/lib/uploadLimits";
 import type { ParsedQuote } from "@/lib/validations/quoteSchemas";
 
 export const runtime = "nodejs";
-
-const MAX_QUOTES = 20;
-const MAX_FILE_SIZE = 20 * 1024 * 1024;
+const PDF_MIME_TYPE = "application/pdf";
 
 type DocumentKind = "quote" | "purchase_request" | "order" | "invoice" | "unknown";
 
@@ -54,6 +58,12 @@ type UploadedQuoteEntry = {
   originalFilename: string;
 };
 
+type PdfValidationResult = {
+  isValid: boolean;
+  warning?: string;
+  reason?: string;
+};
+
 function fileNameKey(value: string) {
   return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
@@ -62,6 +72,34 @@ function parseQuoteDate(value?: string) {
   if (!value) return undefined;
   const date = new Date(value);
   return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+function validatePdfOnly(file: File): PdfValidationResult {
+  const hasPdfExtension = /\.pdf$/i.test(file.name);
+  const mimeType = file.type.trim().toLowerCase();
+
+  if (!hasPdfExtension) {
+    return {
+      isValid: false,
+      reason: `El archivo ${file.name} no es PDF. Solo se aceptan archivos PDF en esta version.`
+    };
+  }
+
+  if (!mimeType) {
+    return {
+      isValid: true,
+      warning: `El archivo ${file.name} no trae MIME; se acepto por extension .pdf.`
+    };
+  }
+
+  if (mimeType !== PDF_MIME_TYPE) {
+    return {
+      isValid: false,
+      reason: `El archivo ${file.name} tiene MIME ${mimeType}; solo se aceptan archivos PDF en esta version.`
+    };
+  }
+
+  return { isValid: true };
 }
 
 function readExchangeRateRequest(formData: FormData): ExchangeRateRequest {
@@ -337,7 +375,11 @@ export async function POST(request: Request) {
     ) {
       return NextResponse.json(
         {
+          ok: false,
           status: "error",
+          errors: ["Tipo de cambio manual invalido."],
+          documents: [],
+          omittedFiles: [],
           message: "Tipo de cambio manual invalido.",
           warnings,
           documentDiagnostics: diagnostics
@@ -354,7 +396,13 @@ export async function POST(request: Request) {
     } catch {
       return NextResponse.json(
         {
+          ok: false,
           status: "error",
+          errors: [
+            "No se encontro la plantilla oficial en templates/template.xlsx o STORAGE_DIR/templates/template.xlsx"
+          ],
+          documents: [],
+          omittedFiles: [],
           message:
             "No se encontro la plantilla oficial en templates/template.xlsx o STORAGE_DIR/templates/template.xlsx",
           warnings,
@@ -367,8 +415,12 @@ export async function POST(request: Request) {
     if (quotes.length === 0) {
       return NextResponse.json(
         {
+          ok: false,
           status: "error",
-          message: "Debes subir al menos una cotizacion (PDF, XLSX, XLS, CSV, TXT, HTML o DOCX).",
+          errors: ["Debes subir al menos una cotizacion en PDF."],
+          documents: [],
+          omittedFiles: [],
+          message: "Debes subir al menos una cotizacion en PDF.",
           warnings,
           documentDiagnostics: diagnostics
         },
@@ -379,7 +431,11 @@ export async function POST(request: Request) {
     if (quotes.length > MAX_QUOTES) {
       return NextResponse.json(
         {
+          ok: false,
           status: "error",
+          errors: [`Maximo permitido: ${MAX_QUOTES} archivos.`],
+          documents: [],
+          omittedFiles: quotes.map((quote) => quote.name),
           message: `Maximo permitido: ${MAX_QUOTES} archivos.`,
           warnings,
           documentDiagnostics: diagnostics
@@ -388,29 +444,49 @@ export async function POST(request: Request) {
       );
     }
 
+    const invalidPdfErrors: string[] = [];
+    const omittedFiles: string[] = [];
+    const totalUploadSize = quotes.reduce((sum, quote) => sum + quote.size, 0);
+
     for (const quote of quotes) {
-      if (detectSupportedExtractorFileKind(quote.name, quote.type) === "unknown") {
-        return NextResponse.json(
-          {
-            status: "error",
-            message: `El archivo ${quote.name} no tiene un formato soportado. Usa PDF, XLSX, XLS, CSV, TXT, HTML o DOCX.`,
-            warnings,
-            documentDiagnostics: diagnostics
-          },
-          { status: 400 }
-        );
+      const pdfValidation = validatePdfOnly(quote);
+      if (!pdfValidation.isValid) {
+        invalidPdfErrors.push(pdfValidation.reason ?? "Solo se aceptan archivos PDF en esta version.");
+        omittedFiles.push(quote.name);
+      } else if (pdfValidation.warning) {
+        warnings.push(pdfValidation.warning);
       }
-      if (quote.size > MAX_FILE_SIZE) {
-        return NextResponse.json(
-          {
-            status: "error",
-            message: `El archivo ${quote.name} supera 20 MB.`,
-            warnings,
-            documentDiagnostics: diagnostics
-          },
-          { status: 400 }
-        );
+
+      if (quote.size > MAX_PDF_FILE_SIZE_BYTES) {
+        invalidPdfErrors.push(`El archivo ${quote.name} supera ${MAX_PDF_FILE_SIZE_MB} MB.`);
+        omittedFiles.push(quote.name);
       }
+    }
+
+    if (totalUploadSize > MAX_TOTAL_UPLOAD_SIZE_BYTES) {
+      invalidPdfErrors.push(
+        `La carga total supera el máximo permitido de ${MAX_TOTAL_UPLOAD_SIZE_MB} MB. Sube menos PDFs o reduce el tamaño de los archivos.`
+      );
+      omittedFiles.push(...quotes.map((quote) => quote.name));
+    }
+
+    if (invalidPdfErrors.length > 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          status: "error",
+          message:
+            totalUploadSize > MAX_TOTAL_UPLOAD_SIZE_BYTES
+              ? `La carga total supera el máximo permitido de ${MAX_TOTAL_UPLOAD_SIZE_MB} MB. Sube menos PDFs o reduce el tamaño de los archivos.`
+              : "Solo se aceptan archivos PDF en esta version.",
+          errors: [...new Set(invalidPdfErrors)],
+          warnings: userFacingWarnings(warnings),
+          documents: [],
+          omittedFiles: [...new Set(omittedFiles)],
+          documentDiagnostics: diagnostics
+        },
+        { status: 400 }
+      );
     }
 
     const n8nDiagnostics = getN8nDiagnostics();
@@ -424,7 +500,13 @@ export async function POST(request: Request) {
     if (!n8nDiagnostics.n8nWebhookConfigured) {
       return NextResponse.json(
         {
+          ok: false,
           status: "error",
+          errors: [
+            "Extractor n8n no configurado. Falta N8N_EXTRACT_WEBHOOK_URL en el entorno del servidor."
+          ],
+          documents: [],
+          omittedFiles: quotes.map((quote) => quote.name),
           message:
             "Extractor n8n no configurado. Falta N8N_EXTRACT_WEBHOOK_URL en el entorno del servidor.",
           warnings,
@@ -437,7 +519,13 @@ export async function POST(request: Request) {
     if (!n8nDiagnostics.n8nApiKeyConfigured) {
       return NextResponse.json(
         {
+          ok: false,
           status: "error",
+          errors: [
+            "Extractor n8n no configurado. Falta N8N_EXTRACT_API_KEY en el entorno del servidor."
+          ],
+          documents: [],
+          omittedFiles: quotes.map((quote) => quote.name),
           message:
             "Extractor n8n no configurado. Falta N8N_EXTRACT_API_KEY en el entorno del servidor.",
           warnings,
@@ -502,6 +590,10 @@ export async function POST(request: Request) {
               "No se pudo conectar con n8n. Revise que el workflow esté activo y que el webhook esté disponible."
             );
       const errorPayload = n8nErrorResponse(normalizedError);
+      const userMessage =
+        normalizedError.code === "EXTRACT_FAILED"
+          ? "No se pudo extraer la cotizacion desde n8n."
+          : errorPayload.message;
 
       await prisma.processingJob.update({
         where: { id: activeJobId },
@@ -524,8 +616,12 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           jobId: activeJobId,
+          ok: false,
           status: "error",
-          message: errorPayload.message,
+          errors: [userMessage],
+          documents: [],
+          omittedFiles: quotes.map((quote) => quote.name),
+          message: userMessage,
           warnings: userFacingWarnings([...warnings, normalizedError.message]),
           documentDiagnostics: diagnostics
         },
@@ -632,7 +728,11 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           jobId: activeJobId,
+          ok: false,
           status: "error",
+          errors: ["No se encontraron cotizaciones validas."],
+          documents: [],
+          omittedFiles: quotes.map((quote) => quote.name),
           message:
             "Los archivos enviados no corresponden a cotizaciones de proveedores o no contienen una tabla reconocible de productos, cantidades, precios y moneda.",
           title: friendlyMessage,
@@ -699,6 +799,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       jobId: activeJobId,
+      ok: true,
       status: "completed",
       suppliers: consolidated.suppliers.map((supplier) => supplier.name),
       itemsDetected: consolidated.comparison.length,
@@ -706,7 +807,8 @@ export async function POST(request: Request) {
       downloadUrl: `/api/download/${activeJobId}`,
       analytics,
       budgetObjective: mergedAdditionalEvaluation?.budgetObjective ?? null,
-      documentDiagnostics: diagnostics
+      documentDiagnostics: diagnostics,
+      documents: mapped.documentResults
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Error desconocido.";
@@ -723,7 +825,11 @@ export async function POST(request: Request) {
     return NextResponse.json(
       {
         jobId,
+        ok: false,
         status: "error",
+        errors: ["Ocurrio un problema al procesar los archivos."],
+        documents: [],
+        omittedFiles: [],
         message: "Ocurrio un problema al procesar los archivos. Intenta nuevamente con cotizaciones legibles.",
         technicalMessage: message,
         warnings: userFacingWarnings(warnings),

@@ -14,7 +14,7 @@ const PROCESS_STEPS = [
   "Completando plantilla Excel...",
   "Generando archivo final..."
 ] as const;
-const PROCESS_TIMEOUT_MS = 120_000;
+const PROCESS_TIMEOUT_MS = 180_000;
 const DEFAULT_EXCHANGE_RATE_MARGIN_CLP = 5;
 const EXCHANGE_RATE_MARGIN_STORAGE_KEY = "comparativa_dolar_margen_adicional_clp";
 const EXCHANGE_RATE_REFRESH_MS = 60 * 60 * 1000;

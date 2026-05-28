@@ -191,7 +191,7 @@ npm run start
 ## Uso
 
 1. Abre `http://localhost:3000`.
-2. Sube una o varias cotizaciones PDF.
+2. Sube una o varias cotizaciones PDF (Version 1: solo PDF, maximo 15 MB por archivo y 45 MB por carga).
 3. Presiona `Generar tabla comparativa`.
 4. Revisa proveedores detectados, productos detectados y advertencias.
 5. Descarga el Excel final con `Descargar Excel generado`.
@@ -200,7 +200,7 @@ npm run start
 
 1. `POST /api/process` recibe `multipart/form-data`.
 2. Ejecuta `ensureStorageLayout()`.
-3. Valida la plantilla `.xlsx` y los PDFs.
+3. Valida la plantilla `.xlsx` y que todos los archivos sean PDF.
 4. Crea un `ProcessingJob`.
 5. Guarda archivos en `uploads/{jobId}` o `${STORAGE_DIR}/uploads/{jobId}`.
 6. Envía archivos + contexto (tipo de cambio, margen y datos de evaluación) al webhook n8n.

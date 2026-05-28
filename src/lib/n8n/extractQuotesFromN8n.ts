@@ -12,11 +12,17 @@ type SupportedExtractorFileKind = "pdf" | "xlsx" | "xls" | "csv" | "txt" | "html
 type N8nDocumentKind = "quote" | "purchase_request" | "order" | "invoice" | "unknown";
 
 type N8nItem = {
+  lineNumber?: string | number | null;
+  sku?: string | null;
   description?: string | null;
   quantity?: string | number | null;
   unit?: string | null;
   unitPrice?: string | number | null;
+  unitPriceClp?: string | number | null;
+  unitPriceCLP?: string | number | null;
   total?: string | number | null;
+  totalClp?: string | number | null;
+  totalCLP?: string | number | null;
   currency?: string | null;
   confidence?: string | number | null;
   rawLine?: string | null;
@@ -37,7 +43,12 @@ export type N8nExtractInput = {
 export type N8nDocumentResponse = {
   ok: boolean;
   fileName: string;
+  fileKind: string | null;
   detectedType: string;
+  supplierName: string | null;
+  supplierRut: string | null;
+  documentNumber: string | null;
+  documentDate: string | null;
   supplier: {
     name: string | null;
     rut: string | null;
@@ -73,6 +84,9 @@ export type N8nExtractResponse = {
     totalItems: number | null;
   } | null;
   documents: N8nDocumentResponse[];
+  validDocuments: N8nDocumentResponse[];
+  validQuotations: N8nDocumentResponse[];
+  omittedFiles: Array<{ fileName?: string; reason?: string; [key: string]: unknown }>;
   warnings: string[];
   errors: string[];
 };
@@ -121,11 +135,17 @@ export type N8nDiagnostics = {
 
 const N8nItemSchema = z
   .object({
+    lineNumber: z.union([z.string(), z.number()]).optional().nullable(),
+    sku: z.string().optional().nullable(),
     description: z.string().optional().nullable(),
     quantity: z.union([z.string(), z.number()]).optional().nullable(),
     unit: z.string().optional().nullable(),
     unitPrice: z.union([z.string(), z.number()]).optional().nullable(),
+    unitPriceClp: z.union([z.string(), z.number()]).optional().nullable(),
+    unitPriceCLP: z.union([z.string(), z.number()]).optional().nullable(),
     total: z.union([z.string(), z.number()]).optional().nullable(),
+    totalClp: z.union([z.string(), z.number()]).optional().nullable(),
+    totalCLP: z.union([z.string(), z.number()]).optional().nullable(),
     currency: z.string().optional().nullable(),
     confidence: z.union([z.string(), z.number()]).optional().nullable(),
     rawLine: z.string().optional().nullable(),
@@ -137,7 +157,12 @@ const N8nDocumentSchema = z
   .object({
     ok: z.boolean().optional().default(true),
     fileName: z.string().optional().default(""),
+    fileKind: z.string().optional().nullable(),
     detectedType: z.string().optional().default("unknown"),
+    supplierName: z.string().optional().nullable(),
+    supplierRut: z.string().optional().nullable(),
+    documentNumber: z.string().optional().nullable(),
+    documentDate: z.string().optional().nullable(),
     supplier: z
       .object({
         name: z.string().optional().nullable(),
@@ -184,6 +209,9 @@ const N8nResponseSchema = z
       .optional()
       .nullable(),
     documents: z.array(N8nDocumentSchema).optional().default([]),
+    validDocuments: z.array(N8nDocumentSchema).optional().default([]),
+    validQuotations: z.array(N8nDocumentSchema).optional().default([]),
+    omittedFiles: z.array(z.record(z.unknown())).optional().default([]),
     warnings: z.array(z.string()).optional().default([]),
     errors: z.array(z.string()).optional().default([])
   })
@@ -336,8 +364,11 @@ function invalidDocumentAction(kind: N8nDocumentKind) {
 function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocument {
   const fileName = safeText(document.fileName) ?? "archivo-sin-nombre";
   const detectedType = normalizeDocumentKind(document.detectedType);
-  const supplierName = safeText(document.supplier?.name ?? undefined);
+  const supplierName =
+    safeText(document.supplier?.name ?? undefined) ??
+    safeText(document.supplierName ?? undefined);
   const docWarnings: string[] = [...document.warnings];
+  if (document.error) docWarnings.push(document.error);
 
   if (!document.ok || detectedType !== "quote" || !supplierName) {
     return {
@@ -396,8 +427,14 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
       continue;
     }
 
-    const unitPriceInput = parseNonNegativeNumber(rawItem.unitPrice);
-    const totalInput = parseNonNegativeNumber(rawItem.total);
+    const unitPriceInput =
+      parseNonNegativeNumber(rawItem.unitPriceClp) ??
+      parseNonNegativeNumber(rawItem.unitPriceCLP) ??
+      parseNonNegativeNumber(rawItem.unitPrice);
+    const totalInput =
+      parseNonNegativeNumber(rawItem.totalClp) ??
+      parseNonNegativeNumber(rawItem.totalCLP) ??
+      parseNonNegativeNumber(rawItem.total);
     if (unitPriceInput === undefined && totalInput === undefined) {
       quoteWarnings.push(`${supplierName}: ${description} omitido por no tener precio unitario ni total valido.`);
       continue;
@@ -432,7 +469,7 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
     }
 
     validItems.push({
-      sourceItem: rawItem.sourceItem ?? index + 1,
+      sourceItem: rawItem.sourceItem ?? rawItem.lineNumber ?? index + 1,
       description,
       normalizedProductKey: normalizeProductName(description),
       quantity,
@@ -463,8 +500,8 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
 
   const parsedQuote: ParsedQuote = {
     supplierName,
-    quoteNumber: undefined,
-    quoteDate: undefined,
+    quoteNumber: safeText(document.documentNumber) ?? undefined,
+    quoteDate: safeText(document.documentDate) ?? undefined,
     paymentCondition: safeText(document.paymentTerms),
     deliveryTime: safeText(document.deliveryTime),
     pricesIncludeVat: false,
@@ -491,6 +528,38 @@ function parseSummaryValue(value: string | number | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function mapN8nDocument(document: z.infer<typeof N8nDocumentSchema>): N8nDocumentResponse {
+  return {
+    ok: document.ok,
+    fileName: safeText(document.fileName) ?? "",
+    fileKind: safeText(document.fileKind) ?? null,
+    detectedType: safeText(document.detectedType) ?? "unknown",
+    supplierName: safeText(document.supplierName) ?? null,
+    supplierRut: safeText(document.supplierRut) ?? null,
+    documentNumber: safeText(document.documentNumber) ?? null,
+    documentDate: safeText(document.documentDate) ?? null,
+    supplier: document.supplier
+      ? {
+          name: safeText(document.supplier.name) ?? null,
+          rut: safeText(document.supplier.rut) ?? null,
+          confidence: parseNonNegativeNumber(document.supplier.confidence) ?? null
+        }
+      : null,
+    currency: safeText(document.currency) ?? null,
+    paymentTerms: safeText(document.paymentTerms) ?? null,
+    deliveryTime: safeText(document.deliveryTime) ?? null,
+    availability: safeText(document.availability) ?? null,
+    shippingCost:
+      parseNonNegativeNumber(document.shippingCost) ??
+      (safeText(document.shippingCost) ?? null),
+    items: document.items as N8nItem[],
+    warnings: document.warnings,
+    sourceFileKind: safeText(document.sourceFileKind) ?? null,
+    contentLength: parseSummaryValue(document.contentLength),
+    error: safeText(document.error) ?? null
+  };
+}
+
 function parseN8nResponse(payload: unknown): N8nExtractResponse {
   const parsed = N8nResponseSchema.safeParse(payload);
   if (!parsed.success) {
@@ -499,6 +568,14 @@ function parseN8nResponse(payload: unknown): N8nExtractResponse {
       "La respuesta del extractor n8n no tiene el formato esperado."
     );
   }
+
+  const documents = parsed.data.documents.map(mapN8nDocument);
+  const validDocuments = parsed.data.validDocuments.map(mapN8nDocument);
+  const validQuotations = parsed.data.validQuotations.map(mapN8nDocument);
+  const omittedFiles = parsed.data.omittedFiles.map((entry) => ({
+    fileName: safeText(entry.fileName) ?? undefined,
+    reason: safeText(entry.reason) ?? undefined
+  }));
 
   return {
     ok: parsed.data.ok,
@@ -521,30 +598,10 @@ function parseN8nResponse(payload: unknown): N8nExtractResponse {
           totalItems: parseSummaryValue(parsed.data.summary.totalItems)
         }
       : null,
-    documents: parsed.data.documents.map((document) => ({
-      ok: document.ok,
-      fileName: safeText(document.fileName) ?? "",
-      detectedType: safeText(document.detectedType) ?? "unknown",
-      supplier: document.supplier
-        ? {
-            name: safeText(document.supplier.name) ?? null,
-            rut: safeText(document.supplier.rut) ?? null,
-            confidence: parseNonNegativeNumber(document.supplier.confidence) ?? null
-          }
-        : null,
-      currency: safeText(document.currency) ?? null,
-      paymentTerms: safeText(document.paymentTerms) ?? null,
-      deliveryTime: safeText(document.deliveryTime) ?? null,
-      availability: safeText(document.availability) ?? null,
-      shippingCost:
-        parseNonNegativeNumber(document.shippingCost) ??
-        (safeText(document.shippingCost) ?? null),
-      items: document.items as N8nItem[],
-      warnings: document.warnings,
-      sourceFileKind: safeText(document.sourceFileKind) ?? null,
-      contentLength: parseSummaryValue(document.contentLength),
-      error: safeText(document.error) ?? null
-    })),
+    documents,
+    validDocuments,
+    validQuotations,
+    omittedFiles,
     warnings: parsed.data.warnings,
     errors: parsed.data.errors
   };
@@ -699,16 +756,37 @@ export async function extractQuotesFromN8n(input: N8nExtractInput): Promise<N8nE
 }
 
 export function mapN8nDocumentsToQuotes(response: N8nExtractResponse): MapN8nResult {
-  const documentResults = response.documents.map(mapDocumentToQuote);
+  const sourceDocuments =
+    response.validQuotations.length > 0
+      ? response.validQuotations.map((document) => ({
+          ...document,
+          detectedType:
+            safeText(document.detectedType) && normalizeDocumentKind(document.detectedType) !== "unknown"
+              ? document.detectedType
+              : "quotation"
+        }))
+      : response.validDocuments.length > 0
+      ? response.validDocuments
+      : response.documents;
+  const documentResults = sourceDocuments.map(mapDocumentToQuote);
   const parsedQuotes = documentResults
     .filter((document): document is NormalizedN8nDocument & { parsedQuote: ParsedQuote } =>
       document.status === "processed" && Boolean(document.parsedQuote)
     )
     .map((document) => document.parsedQuote);
+  const omittedWarnings = response.omittedFiles
+    .map((file) => {
+      const filename = file.fileName?.trim();
+      if (!filename) return undefined;
+      return file.reason
+        ? `Archivo omitido por n8n: ${filename}. ${file.reason}`
+        : `Archivo omitido por n8n: ${filename}.`;
+    })
+    .filter((warning): warning is string => Boolean(warning));
 
   return {
     parsedQuotes,
     documentResults,
-    warnings: [...response.warnings]
+    warnings: [...response.warnings, ...omittedWarnings]
   };
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useDropzone } from "react-dropzone";
+import { MAX_PDF_FILE_SIZE_BYTES, MAX_PDF_FILE_SIZE_MB, MAX_QUOTES, MAX_TOTAL_UPLOAD_SIZE_MB } from "@/lib/uploadLimits";
 
 type Props = {
   files: File[];
@@ -18,15 +19,15 @@ export function PdfUploader({ files, onFiles, onRemove }: Props) {
       "application/pdf": [".pdf"]
     },
     multiple: true,
-    maxFiles: 20,
-    maxSize: 20 * 1024 * 1024,
+    maxFiles: MAX_QUOTES,
+    maxSize: MAX_PDF_FILE_SIZE_BYTES,
     noClick: true,
     onDrop: (accepted) => {
       const merged = [...files, ...accepted].filter(
         (file, index, list) =>
           list.findIndex((candidate) => candidate.name === file.name && candidate.size === file.size) === index
       );
-      onFiles(merged.slice(0, 20));
+      onFiles(merged.slice(0, MAX_QUOTES));
     }
   });
 
@@ -55,7 +56,7 @@ export function PdfUploader({ files, onFiles, onRemove }: Props) {
         </div>
         <h2 className="mt-4 text-lg font-semibold text-white">Arrastra tus cotizaciones PDF</h2>
         <p className="mt-1.5 max-w-md text-sm leading-6 text-white/82">
-          Puedes subir hasta 20 archivos PDF, con un maximo de 20 MB por archivo.
+          Solo PDF. Maximo {MAX_PDF_FILE_SIZE_MB} MB por archivo y {MAX_TOTAL_UPLOAD_SIZE_MB} MB por carga.
         </p>
         <button
           type="button"
@@ -71,7 +72,7 @@ export function PdfUploader({ files, onFiles, onRemove }: Props) {
           <div className="flex items-center justify-between border-b border-slate-800/90 px-4 py-3">
             <p className="text-sm font-semibold text-white">Archivos seleccionados</p>
             <span className="rounded-full border border-white/20 bg-slate-900/80 px-3 py-1 text-xs text-white/80">
-              {files.length} de 20
+              {files.length} de {MAX_QUOTES}
             </span>
           </div>
           <ul className="max-h-52 divide-y divide-slate-800/80 overflow-auto">
@@ -99,7 +100,7 @@ export function PdfUploader({ files, onFiles, onRemove }: Props) {
 
       {fileRejections.length > 0 && (
         <p className="rounded-lg border border-rose-300/30 bg-rose-900/20 px-3 py-2 text-sm text-rose-200">
-          Algunos archivos fueron rechazados por tipo o tamano.
+          Algunos archivos fueron rechazados. Solo se aceptan cotizaciones en PDF (maximo {MAX_PDF_FILE_SIZE_MB} MB por archivo y {MAX_TOTAL_UPLOAD_SIZE_MB} MB por carga).
         </p>
       )}
     </section>

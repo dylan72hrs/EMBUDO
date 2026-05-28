@@ -1,0 +1,7 @@
+export const MAX_QUOTES = 20;
+export const MAX_PDF_FILE_SIZE_MB = 15;
+export const MAX_TOTAL_UPLOAD_SIZE_MB = 45;
+
+export const MB_IN_BYTES = 1024 * 1024;
+export const MAX_PDF_FILE_SIZE_BYTES = MAX_PDF_FILE_SIZE_MB * MB_IN_BYTES;
+export const MAX_TOTAL_UPLOAD_SIZE_BYTES = MAX_TOTAL_UPLOAD_SIZE_MB * MB_IN_BYTES;
