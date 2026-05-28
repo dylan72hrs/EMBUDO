@@ -96,6 +96,7 @@ export type MapN8nResult = {
 
 type N8nErrorCode =
   | "NOT_CONFIGURED"
+  | "AUTH"
   | "NETWORK"
   | "TIMEOUT"
   | "INVALID_RESPONSE"
@@ -110,6 +111,13 @@ export class N8nExtractorError extends Error {
     this.code = code;
   }
 }
+
+export type N8nDiagnostics = {
+  n8nWebhookConfigured: boolean;
+  n8nApiKeyConfigured: boolean;
+  n8nTimeoutMs: number;
+  n8nWebhookHost: string | null;
+};
 
 const N8nItemSchema = z
   .object({
@@ -549,6 +557,27 @@ function webhookTimeoutMs() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_TIMEOUT_MS;
 }
 
+function webhookHost(value: string | undefined) {
+  if (!value) return null;
+  try {
+    return new URL(value).host;
+  } catch {
+    return null;
+  }
+}
+
+export function getN8nDiagnostics(): N8nDiagnostics {
+  const webhookUrl = process.env.N8N_EXTRACT_WEBHOOK_URL?.trim();
+  const apiKey = process.env.N8N_EXTRACT_API_KEY?.trim();
+
+  return {
+    n8nWebhookConfigured: Boolean(webhookUrl),
+    n8nApiKeyConfigured: Boolean(apiKey),
+    n8nTimeoutMs: webhookTimeoutMs(),
+    n8nWebhookHost: webhookHost(webhookUrl)
+  };
+}
+
 export function detectSupportedExtractorFileKind(
   filename: string,
   mimeType?: string
@@ -582,8 +611,18 @@ export async function extractQuotesFromN8n(input: N8nExtractInput): Promise<N8nE
   const webhookUrl = process.env.N8N_EXTRACT_WEBHOOK_URL?.trim();
   const apiKey = process.env.N8N_EXTRACT_API_KEY?.trim();
 
-  if (!webhookUrl || !apiKey) {
-    throw new N8nExtractorError("NOT_CONFIGURED", "Extractor n8n no configurado.");
+  if (!webhookUrl) {
+    throw new N8nExtractorError(
+      "NOT_CONFIGURED",
+      "Extractor n8n no configurado. Falta N8N_EXTRACT_WEBHOOK_URL en el entorno del servidor."
+    );
+  }
+
+  if (!apiKey) {
+    throw new N8nExtractorError(
+      "NOT_CONFIGURED",
+      "Extractor n8n no configurado. Falta N8N_EXTRACT_API_KEY en el entorno del servidor."
+    );
   }
 
   const formData = new FormData();
@@ -603,6 +642,13 @@ export async function extractQuotesFromN8n(input: N8nExtractInput): Promise<N8nE
   const timeout = setTimeout(() => controller.abort(), webhookTimeoutMs());
 
   try {
+    console.info("[n8n] sending request", {
+      jobId: input.jobId,
+      filesCount: input.files.length,
+      webhookHost: webhookHost(webhookUrl),
+      timeoutMs: webhookTimeoutMs()
+    });
+
     const response = await fetch(webhookUrl, {
       method: "POST",
       body: formData,
@@ -614,6 +660,13 @@ export async function extractQuotesFromN8n(input: N8nExtractInput): Promise<N8nE
 
     const payload = await response.json().catch(() => null);
     if (!response.ok) {
+      if (response.status === 401 || response.status === 403) {
+        throw new N8nExtractorError(
+          "AUTH",
+          "No se pudo autenticar con n8n. Revise la clave compartida entre Render y Azure."
+        );
+      }
+
       const message =
         typeof payload === "object" && payload && "message" in payload && typeof payload.message === "string"
           ? payload.message

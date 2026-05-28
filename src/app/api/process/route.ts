@@ -17,6 +17,7 @@ import { buildPurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
 import {
   detectSupportedExtractorFileKind,
   extractQuotesFromN8n,
+  getN8nDiagnostics,
   mapN8nDocumentsToQuotes,
   N8nExtractorError,
   type NormalizedN8nDocument
@@ -298,13 +299,19 @@ function n8nErrorResponse(error: N8nExtractorError) {
   if (error.code === "NOT_CONFIGURED") {
     return {
       statusCode: 500,
-      message: "Extractor n8n no configurado."
+      message: error.message
+    };
+  }
+  if (error.code === "AUTH") {
+    return {
+      statusCode: 502,
+      message: "No se pudo autenticar con n8n. Revise la clave compartida entre Render y Azure."
     };
   }
   if (error.code === "TIMEOUT" || error.code === "NETWORK") {
     return {
       statusCode: 502,
-      message: "No se pudo conectar con el extractor n8n. Intente nuevamente o contacte a TI."
+      message: "No se pudo conectar con n8n. Revise que el workflow esté activo y que el webhook esté disponible."
     };
   }
   return {
@@ -406,11 +413,33 @@ export async function POST(request: Request) {
       }
     }
 
-    if (!process.env.N8N_EXTRACT_WEBHOOK_URL?.trim() || !process.env.N8N_EXTRACT_API_KEY?.trim()) {
+    const n8nDiagnostics = getN8nDiagnostics();
+    console.info("[n8n] config", {
+      webhookConfigured: n8nDiagnostics.n8nWebhookConfigured,
+      apiKeyConfigured: n8nDiagnostics.n8nApiKeyConfigured,
+      timeoutMs: n8nDiagnostics.n8nTimeoutMs,
+      webhookHost: n8nDiagnostics.n8nWebhookHost
+    });
+
+    if (!n8nDiagnostics.n8nWebhookConfigured) {
       return NextResponse.json(
         {
           status: "error",
-          message: "Extractor n8n no configurado.",
+          message:
+            "Extractor n8n no configurado. Falta N8N_EXTRACT_WEBHOOK_URL en el entorno del servidor.",
+          warnings,
+          documentDiagnostics: diagnostics
+        },
+        { status: 500 }
+      );
+    }
+
+    if (!n8nDiagnostics.n8nApiKeyConfigured) {
+      return NextResponse.json(
+        {
+          status: "error",
+          message:
+            "Extractor n8n no configurado. Falta N8N_EXTRACT_API_KEY en el entorno del servidor.",
           warnings,
           documentDiagnostics: diagnostics
         },
@@ -446,6 +475,11 @@ export async function POST(request: Request) {
 
     const exchange = await getExchangeRate(exchangeRateRequest);
     const targetCurrency = process.env.TARGET_CURRENCY === "USD" ? "USD" : "CLP";
+    console.info("[n8n] sending files", {
+      filesCount: quotes.length,
+      jobId: activeJobId,
+      webhookHost: n8nDiagnostics.n8nWebhookHost
+    });
 
     let n8nResponse;
     try {
@@ -465,7 +499,7 @@ export async function POST(request: Request) {
           ? error
           : new N8nExtractorError(
               "NETWORK",
-              "No se pudo conectar con el extractor n8n. Intente nuevamente o contacte a TI."
+              "No se pudo conectar con n8n. Revise que el workflow esté activo y que el webhook esté disponible."
             );
       const errorPayload = n8nErrorResponse(normalizedError);
 

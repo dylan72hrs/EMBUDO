@@ -70,6 +70,7 @@ Notas de moneda:
 - `N8N_EXTRACT_WEBHOOK_URL` define el extractor principal (obligatorio).
 - `N8N_EXTRACT_API_KEY` se envía como `Authorization: Bearer ...` desde backend.
 - `N8N_EXTRACT_TIMEOUT_MS` define timeout del webhook (default 180000 ms).
+- `GET /api/diagnostics/n8n` permite validar en runtime si Render está leyendo estas variables (sin exponer secretos).
 
 ## Producción
 
