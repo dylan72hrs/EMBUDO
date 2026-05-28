@@ -2,18 +2,25 @@ import { access, copyFile } from "node:fs/promises";
 import path from "node:path";
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
-import {
-  detectSupportedQuoteFileKind,
-  extractQuoteFromUploadedFile
-} from "@/lib/parser/extractQuoteFromUploadedFile";
 import { consolidateQuotes } from "@/lib/normalize/consolidateQuotes";
 import {
   generateComparisonExcel,
   type AdditionalEvaluationData,
   type SupplierEvaluationInput
 } from "@/lib/excel/generateComparisonExcel";
-import { parseExchangeRateValue, type ExchangeRateRequest } from "@/lib/currency/getExchangeRate";
+import {
+  getExchangeRate,
+  parseExchangeRateValue,
+  type ExchangeRateRequest
+} from "@/lib/currency/getExchangeRate";
 import { buildPurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
+import {
+  detectSupportedExtractorFileKind,
+  extractQuotesFromN8n,
+  mapN8nDocumentsToQuotes,
+  N8nExtractorError,
+  type NormalizedN8nDocument
+} from "@/lib/n8n/extractQuotesFromN8n";
 import {
   ensureJobDirectories,
   ensureStorageLayout,
@@ -41,8 +48,13 @@ type DocumentDiagnostic = {
   action: string;
 };
 
-function isSupportedQuoteFile(file: File) {
-  return detectSupportedQuoteFileKind(file.name, file.type) !== "unknown";
+type UploadedQuoteEntry = {
+  id: string;
+  originalFilename: string;
+};
+
+function fileNameKey(value: string) {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
 }
 
 function parseQuoteDate(value?: string) {
@@ -73,98 +85,6 @@ function normalizeText(value: string) {
     .toLowerCase();
 }
 
-function classifyUploadedDocument(text: string): DocumentKind {
-  const normalized = normalizeText(text);
-  const hasQuoteSignals =
-    /(cotizacion|cotizaci[oó]n|propuesta comercial|presupuesto)/i.test(text) &&
-    /(cantidad|cant\.|unitario|precio unitario|total|descripcion|descripci[oó]n)/i.test(text);
-  const hasCurrencySignals = /(us\$|usd|clp|\$)/i.test(text);
-
-  if (hasQuoteSignals && hasCurrencySignals) return "quote";
-
-  const looksPurchaseRequest =
-    /(solicitud orden de compra|solicitud oc|orden de compra|servicio: arriendo|sub total|iva|total clp)/i.test(
-      normalized
-    );
-  if (looksPurchaseRequest) return "purchase_request";
-
-  if (/(orden de compra|purchase order|oc nro|oc n[°o])/i.test(normalized)) return "order";
-  if (/(factura|folio|sii|documento tributario)/i.test(normalized)) return "invoice";
-
-  return "unknown";
-}
-
-function kindLabel(kind: DocumentKind) {
-  if (kind === "purchase_request") return "Solicitud OC / documento interno";
-  if (kind === "order") return "Orden de compra";
-  if (kind === "invoice") return "Factura";
-  if (kind === "quote") return "Cotizacion";
-  return "Desconocido";
-}
-
-function invalidDocumentReason(kind: DocumentKind, looksLikeQuote: boolean, lookedScanned: boolean) {
-  if (lookedScanned) {
-    return "El archivo parece una cotizacion, pero no contiene texto extraible. Puede ser un PDF escaneado o una imagen.";
-  }
-  if (looksLikeQuote) {
-    return "Cotizacion detectada, pero el formato de tabla no pudo leerse con seguridad.";
-  }
-  if (kind === "purchase_request") {
-    return "El documento contiene una solicitud de compra con valores internos, pero no una cotizacion de proveedor con estructura comparable.";
-  }
-  if (kind === "invoice") {
-    return "El documento corresponde a una factura y no a una cotizacion de proveedor para comparar ofertas.";
-  }
-  if (kind === "order") {
-    return "El documento corresponde a una orden de compra y no a una cotizacion de proveedor.";
-  }
-  return "No se detecto una estructura clara de cotizacion con productos, cantidades, precios unitarios, totales y moneda.";
-}
-
-function userFacingWarnings(inputWarnings: string[]) {
-  const mapped = inputWarnings.map((warning) => {
-    const normalized = normalizeText(warning);
-    if (normalized.includes("no se detectaron lineas de productos")) {
-      return "Se omitio un archivo porque no fue posible leer una tabla de productos valida.";
-    }
-    if (normalized.includes("no se pudo detectar moneda")) {
-      return "Se omitio un archivo porque no fue posible identificar una moneda util para comparar.";
-    }
-    if (normalized.includes("revisar parser")) {
-      return "Se omitio un archivo porque no se pudo interpretar como cotizacion valida.";
-    }
-    return warning;
-  });
-
-  return [...new Set(mapped)];
-}
-
-function buildInvalidDiagnostic(
-  filename: string,
-  kind: DocumentKind,
-  looksLikeQuote: boolean,
-  lookedScanned = false
-): DocumentDiagnostic {
-  return {
-    filename,
-    typeDetected: kindLabel(kind),
-    status: "omitted",
-    reason: invalidDocumentReason(kind, looksLikeQuote, lookedScanned),
-    missing: [
-      "Proveedor cotizante identificable",
-      "Productos con cantidad",
-      "Precio unitario",
-      "Total por item",
-      "Moneda reconocible"
-    ],
-    action: lookedScanned
-      ? "Sube un PDF con texto seleccionable o una cotizacion en Excel (XLSX/XLS)."
-      : looksLikeQuote
-      ? "Revise que el PDF tenga productos, cantidades, precio unitario, total y moneda visibles. Si el formato es nuevo, debe agregarse soporte al parser generico."
-      : "Sube una cotizacion formal de proveedor (por ejemplo ADIS, Echave Turri o Tecno Mercado)."
-  };
-}
-
 function safeText(value: unknown) {
   if (typeof value !== "string") return undefined;
   const trimmed = value.trim();
@@ -191,15 +111,16 @@ function parseSupplierEvaluations(value: unknown): SupplierEvaluationInput[] {
   for (const item of value) {
     if (!item || typeof item !== "object") continue;
     const record = item as Record<string, unknown>;
-    const supplierName = safeText(record.supplierName);
+    const supplierName =
+      safeText(record.supplierName) ?? safeText(record.supplier) ?? safeText(record.name);
     if (!supplierName) continue;
 
     parsed.push({
       supplierName,
-      paymentCondition: safeText(record.paymentCondition),
+      paymentCondition: safeText(record.paymentCondition) ?? safeText(record.paymentTerms),
       deliveryTime: safeText(record.deliveryTime),
       availability: safeText(record.availability),
-      associatedCosts: safeText(record.associatedCosts),
+      associatedCosts: safeText(record.associatedCosts) ?? safeText(record.shippingCost),
       creditStatus: safeChoice(record.creditStatus),
       providerEvaluation: safeChoice(record.providerEvaluation)
     });
@@ -238,6 +159,130 @@ function readAdditionalEvaluationData(formData: FormData): AdditionalEvaluationD
   }
 }
 
+function readAdditionalEvaluationDataFromN8n(
+  raw: Record<string, unknown> | null | undefined
+): AdditionalEvaluationData | undefined {
+  if (!raw) return undefined;
+
+  const primaryRows = parseSupplierEvaluations(raw.supplierEvaluations);
+  const fallbackRows = parseSupplierEvaluations(raw.providerVariables);
+  const supplierEvaluations = primaryRows.length > 0 ? primaryRows : fallbackRows;
+  const additionalEvaluation: AdditionalEvaluationData = {
+    awardCriteria: safeText(raw.awardCriteria) ?? safeText(raw.criterioAdjudicacion),
+    awardResponsible: safeText(raw.awardResponsible) ?? safeText(raw.responsableAdjudicacion),
+    buyerResponsible: safeText(raw.buyerResponsible) ?? safeText(raw.compradorResponsable),
+    urgency: safeChoice(raw.urgency) ?? safeChoice(raw.gradoUrgencia),
+    budgetObjective: parseBudget(raw.budgetObjective) ?? parseBudget(raw.presupuestoObjetivo),
+    supplierEvaluations
+  };
+
+  const hasContent =
+    Boolean(additionalEvaluation.awardCriteria) ||
+    Boolean(additionalEvaluation.awardResponsible) ||
+    Boolean(additionalEvaluation.buyerResponsible) ||
+    Boolean(additionalEvaluation.urgency) ||
+    typeof additionalEvaluation.budgetObjective === "number" ||
+    supplierEvaluations.length > 0;
+
+  return hasContent ? additionalEvaluation : undefined;
+}
+
+function mergeAdditionalEvaluationData(
+  localData: AdditionalEvaluationData | undefined,
+  n8nData: AdditionalEvaluationData | undefined
+) {
+  if (!localData) return n8nData;
+  if (!n8nData) return localData;
+
+  const localHasSupplierRows = localData.supplierEvaluations.some((row) =>
+    Boolean(
+      row.supplierName ||
+        row.paymentCondition ||
+        row.deliveryTime ||
+        row.availability ||
+        row.associatedCosts ||
+        row.creditStatus ||
+        row.providerEvaluation
+    )
+  );
+
+  return {
+    awardCriteria: localData.awardCriteria ?? n8nData.awardCriteria,
+    awardResponsible: localData.awardResponsible ?? n8nData.awardResponsible,
+    buyerResponsible: localData.buyerResponsible ?? n8nData.buyerResponsible,
+    urgency: localData.urgency ?? n8nData.urgency,
+    budgetObjective:
+      typeof localData.budgetObjective === "number"
+        ? localData.budgetObjective
+        : n8nData.budgetObjective,
+    supplierEvaluations: localHasSupplierRows
+      ? localData.supplierEvaluations
+      : n8nData.supplierEvaluations
+  };
+}
+
+function kindLabel(kind: DocumentKind) {
+  if (kind === "purchase_request") return "Solicitud OC / documento interno";
+  if (kind === "order") return "Orden de compra";
+  if (kind === "invoice") return "Factura";
+  if (kind === "quote") return "Cotizacion";
+  return "Desconocido";
+}
+
+function toDocumentDiagnostic(document: NormalizedN8nDocument): DocumentDiagnostic {
+  return {
+    filename: document.fileName,
+    typeDetected: kindLabel(document.detectedType),
+    status: document.status,
+    reason: document.reason,
+    missing: document.missing,
+    action: document.action
+  };
+}
+
+function userFacingWarnings(inputWarnings: string[]) {
+  const mapped = inputWarnings
+    .map((warning) => {
+      const normalized = normalizeText(warning);
+      if (normalized.includes("lista base") || normalized.includes("base provider")) return null;
+      return warning.trim();
+    })
+    .filter((warning): warning is string => Boolean(warning));
+
+  return [...new Set(mapped)];
+}
+
+function takeDocumentForFile(
+  documents: NormalizedN8nDocument[],
+  filename: string
+): NormalizedN8nDocument | undefined {
+  const target = fileNameKey(filename);
+  const index = documents.findIndex((document) => fileNameKey(document.fileName) === target);
+  if (index >= 0) {
+    const [found] = documents.splice(index, 1);
+    return found;
+  }
+
+  const unnamedIndex = documents.findIndex((document) => !safeText(document.fileName));
+  if (unnamedIndex >= 0) {
+    const [unnamed] = documents.splice(unnamedIndex, 1);
+    return unnamed;
+  }
+
+  return documents.shift();
+}
+
+function createMissingDocumentDiagnostic(filename: string): DocumentDiagnostic {
+  return {
+    filename,
+    typeDetected: "Desconocido",
+    status: "omitted",
+    reason: "No se recibio resultado del extractor n8n para este archivo.",
+    missing: ["Respuesta valida de extraccion", "Tabla de productos extraida"],
+    action: "Intenta nuevamente o contacta a TI para revisar el workflow de extraccion."
+  };
+}
+
 async function createProcessingJob(originalFileCount: number) {
   return prisma.processingJob.create({
     data: {
@@ -247,6 +292,25 @@ async function createProcessingJob(originalFileCount: number) {
       warningsJson: "[]"
     }
   });
+}
+
+function n8nErrorResponse(error: N8nExtractorError) {
+  if (error.code === "NOT_CONFIGURED") {
+    return {
+      statusCode: 500,
+      message: "Extractor n8n no configurado."
+    };
+  }
+  if (error.code === "TIMEOUT" || error.code === "NETWORK") {
+    return {
+      statusCode: 502,
+      message: "No se pudo conectar con el extractor n8n. Intente nuevamente o contacte a TI."
+    };
+  }
+  return {
+    statusCode: 400,
+    message: error.message || "No se encontraron cotizaciones validas."
+  };
 }
 
 export async function POST(request: Request) {
@@ -297,7 +361,7 @@ export async function POST(request: Request) {
       return NextResponse.json(
         {
           status: "error",
-          message: "Debes subir al menos una cotizacion (PDF, XLSX, XLS o DOCX).",
+          message: "Debes subir al menos una cotizacion (PDF, XLSX, XLS, CSV, TXT, HTML o DOCX).",
           warnings,
           documentDiagnostics: diagnostics
         },
@@ -318,11 +382,11 @@ export async function POST(request: Request) {
     }
 
     for (const quote of quotes) {
-      if (!isSupportedQuoteFile(quote)) {
+      if (detectSupportedExtractorFileKind(quote.name, quote.type) === "unknown") {
         return NextResponse.json(
           {
             status: "error",
-            message: `El archivo ${quote.name} no tiene un formato soportado. Usa PDF, XLSX, XLS o DOCX.`,
+            message: `El archivo ${quote.name} no tiene un formato soportado. Usa PDF, XLSX, XLS, CSV, TXT, HTML o DOCX.`,
             warnings,
             documentDiagnostics: diagnostics
           },
@@ -342,6 +406,18 @@ export async function POST(request: Request) {
       }
     }
 
+    if (!process.env.N8N_EXTRACT_WEBHOOK_URL?.trim() || !process.env.N8N_EXTRACT_API_KEY?.trim()) {
+      return NextResponse.json(
+        {
+          status: "error",
+          message: "Extractor n8n no configurado.",
+          warnings,
+          documentDiagnostics: diagnostics
+        },
+        { status: 500 }
+      );
+    }
+
     const job = await createProcessingJob(quotes.length);
     jobId = job.id;
     const activeJobId = job.id;
@@ -350,9 +426,7 @@ export async function POST(request: Request) {
     const templatePath = path.join(jobUploadDir(activeJobId), "template.xlsx");
     await copyFile(officialTemplatePath, templatePath);
 
-    const parsedQuotes: ParsedQuote[] = [];
-    let omittedInvalidCount = 0;
-
+    const uploadedQuotes: UploadedQuoteEntry[] = [];
     for (const quoteFile of quotes) {
       const filename = sanitizeFilename(quoteFile.name);
       const uploadedPath = path.join(jobPdfDir(activeJobId), filename);
@@ -367,72 +441,114 @@ export async function POST(request: Request) {
         }
       });
 
-      try {
-        const extracted = await extractQuoteFromUploadedFile(uploadedPath, quoteFile.name, quoteFile.type);
-        const parsed = extracted.parsed;
-        const rawText = extracted.rawText;
-        const kind = classifyUploadedDocument(rawText);
-        const looksLikeQuote = extracted.quoteLike || kind === "quote" || /cotiz/i.test(rawText);
+      uploadedQuotes.push({ id: uploadedQuote.id, originalFilename: quoteFile.name });
+    }
 
-        if (parsed.items.length === 0) {
-          omittedInvalidCount += 1;
-          diagnostics.push(
-            buildInvalidDiagnostic(quoteFile.name, kind, looksLikeQuote, extracted.lookedScanned)
-          );
-          warnings.push(
-            extracted.lookedScanned
-              ? `Se omitio ${quoteFile.name}: el archivo parece una cotizacion escaneada o imagen sin texto extraible.`
-              : looksLikeQuote
-              ? `Se omitio ${quoteFile.name}: cotizacion detectada, pero no se pudo leer la tabla con seguridad.`
-              : `Se omitio ${quoteFile.name}: este archivo no parece ser una cotizacion valida.`
-          );
+    const exchange = await getExchangeRate(exchangeRateRequest);
+    const targetCurrency = process.env.TARGET_CURRENCY === "USD" ? "USD" : "CLP";
 
-          await prisma.uploadedQuote.update({
-            where: { id: uploadedQuote.id },
-            data: {
-              supplierName: parsed.supplierName,
-              quoteNumber: parsed.quoteNumber,
-              quoteDate: parseQuoteDate(parsed.quoteDate),
-              rawText,
-              parsedJson: JSON.stringify(parsed),
-              status: "partial_error",
-              errorMessage: extracted.lookedScanned
-                ? "Archivo omitido: cotizacion escaneada sin texto extraible."
-                : "Archivo omitido: no se pudo interpretar la tabla de cotizacion."
-            }
-          });
+    let n8nResponse;
+    try {
+      n8nResponse = await extractQuotesFromN8n({
+        files: quotes,
+        jobId: activeJobId,
+        exchangeRateMode: exchangeRateRequest.exchangeRateMode === "manual" ? "manual" : "auto",
+        exchangeRateBase: exchange.baseRate,
+        exchangeRateMarginClp: exchange.margin,
+        exchangeRateFinal: exchange.finalRate,
+        targetCurrency,
+        evaluationData: additionalEvaluation
+      });
+    } catch (error) {
+      const normalizedError =
+        error instanceof N8nExtractorError
+          ? error
+          : new N8nExtractorError(
+              "NETWORK",
+              "No se pudo conectar con el extractor n8n. Intente nuevamente o contacte a TI."
+            );
+      const errorPayload = n8nErrorResponse(normalizedError);
 
-          continue;
+      await prisma.processingJob.update({
+        where: { id: activeJobId },
+        data: {
+          status: "error",
+          warningsJson: JSON.stringify(
+            userFacingWarnings([...warnings, normalizedError.message])
+          )
         }
+      });
 
-        parsedQuotes.push(parsed);
-        diagnostics.push({
-          filename: quoteFile.name,
-          typeDetected: "Cotizacion",
-          status: "processed",
-          reason: "Cotizacion valida procesada correctamente.",
-          missing: [],
-          action: "Sin accion requerida."
+      await prisma.uploadedQuote.updateMany({
+        where: { jobId: activeJobId, status: "processing" },
+        data: {
+          status: "error",
+          errorMessage: normalizedError.message
+        }
+      });
+
+      return NextResponse.json(
+        {
+          jobId: activeJobId,
+          status: "error",
+          message: errorPayload.message,
+          warnings: userFacingWarnings([...warnings, normalizedError.message]),
+          documentDiagnostics: diagnostics
+        },
+        { status: errorPayload.statusCode }
+      );
+    }
+
+    const mapped = mapN8nDocumentsToQuotes(n8nResponse);
+    warnings.push(...mapped.warnings, ...n8nResponse.errors);
+    const pendingDocuments = [...mapped.documentResults];
+    const parsedQuotes: ParsedQuote[] = [];
+    let omittedInvalidCount = 0;
+
+    for (const uploaded of uploadedQuotes) {
+      const document = takeDocumentForFile(pendingDocuments, uploaded.originalFilename);
+      if (!document) {
+        omittedInvalidCount += 1;
+        const diagnostic = createMissingDocumentDiagnostic(uploaded.originalFilename);
+        diagnostics.push(diagnostic);
+        warnings.push(`Se omitio ${uploaded.originalFilename}: ${diagnostic.reason}`);
+        await prisma.uploadedQuote.update({
+          where: { id: uploaded.id },
+          data: {
+            status: "partial_error",
+            errorMessage: diagnostic.reason
+          }
         });
+        continue;
+      }
+
+      diagnostics.push(toDocumentDiagnostic(document));
+      warnings.push(...document.warnings);
+
+      if (document.status === "processed" && document.parsedQuote) {
+        parsedQuotes.push(document.parsedQuote);
+
+        const rawText = document.parsedQuote.items
+          .map((item) => item.rawLine ?? item.rawBlock ?? item.description)
+          .filter(Boolean)
+          .join("\n");
 
         await prisma.uploadedQuote.update({
-          where: { id: uploadedQuote.id },
+          where: { id: uploaded.id },
           data: {
-            supplierName: parsed.supplierName,
-            quoteNumber: parsed.quoteNumber,
-            quoteDate: parseQuoteDate(parsed.quoteDate),
+            supplierName: document.parsedQuote.supplierName,
+            quoteNumber: document.parsedQuote.quoteNumber,
+            quoteDate: parseQuoteDate(document.parsedQuote.quoteDate),
             rawText,
-            parsedJson: JSON.stringify(parsed),
+            parsedJson: JSON.stringify(document.parsedQuote),
             status: "completed"
           }
         });
 
-        if (parsed.warnings.length > 0) warnings.push(...parsed.warnings);
-
-        if (parsed.items.length > 0) {
+        if (document.parsedQuote.items.length > 0) {
           await prisma.extractedItem.createMany({
-            data: parsed.items.map((item) => ({
-              quoteId: uploadedQuote.id,
+            data: document.parsedQuote.items.map((item) => ({
+              quoteId: uploaded.id,
               sourceItem: item.sourceItem === undefined ? null : String(item.sourceItem),
               description: item.description,
               normalizedProductKey: item.normalizedProductKey,
@@ -445,30 +561,28 @@ export async function POST(request: Request) {
             }))
           });
         }
-      } catch {
+      } else {
         omittedInvalidCount += 1;
-        diagnostics.push({
-          filename: quoteFile.name,
-          typeDetected: "Desconocido",
-          status: "omitted",
-          reason:
-            "El archivo no pudo leerse correctamente como cotizacion. Puede estar escaneado, sin texto util o en un formato no interpretable.",
-          missing: [
-            "Texto legible o tabla estructurada",
-            "Tabla de productos con cantidad y precios",
-            "Moneda reconocible"
-          ],
-          action: "Sube una cotizacion de proveedor con texto seleccionable o una planilla de cotizacion estructurada."
-        });
-        warnings.push(`Se omitio ${quoteFile.name}: no fue posible interpretarlo como cotizacion valida.`);
+        warnings.push(`Se omitio ${uploaded.originalFilename}: ${document.reason}`);
         await prisma.uploadedQuote.update({
-          where: { id: uploadedQuote.id },
+          where: { id: uploaded.id },
           data: {
-            status: "error",
-            errorMessage: "Archivo omitido por formato no compatible."
+            supplierName: document.parsedQuote?.supplierName,
+            quoteNumber: document.parsedQuote?.quoteNumber,
+            quoteDate: parseQuoteDate(document.parsedQuote?.quoteDate),
+            rawText: "",
+            parsedJson: document.parsedQuote ? JSON.stringify(document.parsedQuote) : null,
+            status: "partial_error",
+            errorMessage: document.reason
           }
         });
       }
+    }
+
+    for (const document of pendingDocuments) {
+      warnings.push(
+        `El extractor n8n devolvio un documento no asociado a un archivo subido: ${document.fileName}.`
+      );
     }
 
     if (parsedQuotes.length === 0) {
@@ -495,16 +609,26 @@ export async function POST(request: Request) {
       );
     }
 
-    const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest);
+    const mergedAdditionalEvaluation = mergeAdditionalEvaluationData(
+      additionalEvaluation,
+      readAdditionalEvaluationDataFromN8n(n8nResponse.evaluationData)
+    );
+    const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest, {
+      exchangeRate: exchange
+    });
     const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId, {
-      additionalEvaluation
+      additionalEvaluation: mergedAdditionalEvaluation
     });
     const allWarnings = userFacingWarnings([...new Set([...warnings, ...generated.warnings])]);
     const analytics = buildPurchaseAnalytics(consolidated, allWarnings.length);
 
     if (omittedInvalidCount > 0) {
       allWarnings.push(
-        `Se genero la tabla con ${parsedQuotes.length} cotizacion${parsedQuotes.length > 1 ? "es" : ""} valida${parsedQuotes.length > 1 ? "s" : ""}. Se omitio ${omittedInvalidCount} archivo${omittedInvalidCount > 1 ? "s" : ""} porque no parecia${omittedInvalidCount > 1 ? "n" : ""} cotizacion de proveedor.`
+        `Se genero la tabla con ${parsedQuotes.length} cotizacion${parsedQuotes.length > 1 ? "es" : ""} valida${
+          parsedQuotes.length > 1 ? "s" : ""
+        }. Se omitio ${omittedInvalidCount} archivo${omittedInvalidCount > 1 ? "s" : ""} porque no parecia${
+          omittedInvalidCount > 1 ? "n" : ""
+        } cotizacion de proveedor.`
       );
     }
 
@@ -547,7 +671,7 @@ export async function POST(request: Request) {
       warnings: allWarnings,
       downloadUrl: `/api/download/${activeJobId}`,
       analytics,
-      budgetObjective: additionalEvaluation?.budgetObjective ?? null,
+      budgetObjective: mergedAdditionalEvaluation?.budgetObjective ?? null,
       documentDiagnostics: diagnostics
     });
   } catch (error) {

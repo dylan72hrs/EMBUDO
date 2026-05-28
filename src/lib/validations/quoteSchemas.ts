@@ -72,7 +72,7 @@ export const ComparisonItemSchema = z.object({
 export const AppliedExchangeRateSchema = z.object({
   mode: z.enum(["auto", "manual", "fallback", "env"]),
   baseRate: z.number().positive(),
-  margin: z.number().positive(),
+  margin: z.number().nonnegative(),
   finalRate: z.number().positive()
 });
 

@@ -1,5 +1,9 @@
 import { buildComparisonScope } from "@/lib/normalize/buildComparisonScope";
-import { getExchangeRate, type ExchangeRateRequest } from "@/lib/currency/getExchangeRate";
+import {
+  getExchangeRate,
+  type ExchangeRateRequest,
+  type ExchangeRateResult
+} from "@/lib/currency/getExchangeRate";
 import { compareToBaseItem } from "@/lib/normalize/matchProducts";
 import { displayProductName } from "@/lib/normalize/normalizeProductName";
 import { parseMoney } from "@/lib/parser/parseMoney";
@@ -332,7 +336,8 @@ function tryAttachUnmatchedItemToExistingRows(
 
 export async function consolidateQuotes(
   quotes: ParsedQuote[],
-  exchangeRateRequest: ExchangeRateRequest = {}
+  exchangeRateRequest: ExchangeRateRequest = {},
+  options: { exchangeRate?: ExchangeRateResult } = {}
 ): Promise<ConsolidatedComparison> {
   const scope = buildComparisonScope(quotes);
   const warnings: string[] = [
@@ -366,7 +371,7 @@ export async function consolidateQuotes(
   const requiresConversion = quotes.some((quote) =>
     quote.items.some((item) => isComparableProduct(item) && itemNeedsConversion(item, outputCurrency))
   );
-  const exchange = await getExchangeRate(exchangeRateRequest);
+  const exchange = options.exchangeRate ?? (await getExchangeRate(exchangeRateRequest));
   const conversionTracker: ConversionTracker = { applied: false, convertedPerSupplier: new Map() };
 
   if (requiresConversion) {

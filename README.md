@@ -35,6 +35,9 @@ TARGET_CURRENCY=CLP
 EXCHANGE_RATE_CLP_PER_USD=
 FALLBACK_EXCHANGE_RATE_CLP_PER_USD=950
 EXCHANGE_RATE_MARGIN_CLP=5
+N8N_EXTRACT_WEBHOOK_URL=
+N8N_EXTRACT_API_KEY=
+N8N_EXTRACT_TIMEOUT_MS=180000
 ```
 
 Si `STORAGE_DIR` está vacío, la app usa las rutas locales del repositorio:
@@ -60,10 +63,13 @@ Al iniciar un procesamiento, la app ejecuta `ensureStorageLayout()`: crea las ca
 Notas de moneda:
 
 - `TARGET_CURRENCY=CLP` deja toda la comparación final en pesos chilenos.
-- `EXCHANGE_RATE_CLP_PER_USD` vacío activa modo automático usando `https://mindicador.cl/api/dolar`.
+- `EXCHANGE_RATE_CLP_PER_USD` vacío activa modo automático usando Banco Central.
 - El valor manual ingresado en la pantalla tiene prioridad sobre cualquier variable de entorno.
 - Si falla la API, `EXCHANGE_RATE_CLP_PER_USD` puede usarse como override de entorno; si no existe, se usa `FALLBACK_EXCHANGE_RATE_CLP_PER_USD`.
 - `EXCHANGE_RATE_MARGIN_CLP=5` suma 5 CLP al tipo de cambio base antes de convertir USD a CLP.
+- `N8N_EXTRACT_WEBHOOK_URL` define el extractor principal (obligatorio).
+- `N8N_EXTRACT_API_KEY` se envía como `Authorization: Bearer ...` desde backend.
+- `N8N_EXTRACT_TIMEOUT_MS` define timeout del webhook (default 180000 ms).
 
 ## Producción
 
@@ -104,6 +110,9 @@ TARGET_CURRENCY=CLP
 EXCHANGE_RATE_CLP_PER_USD=
 FALLBACK_EXCHANGE_RATE_CLP_PER_USD=950
 EXCHANGE_RATE_MARGIN_CLP=5
+N8N_EXTRACT_WEBHOOK_URL=
+N8N_EXTRACT_API_KEY=
+N8N_EXTRACT_TIMEOUT_MS=180000
 ```
 
 6. Instala, genera Prisma, aplica migraciones y compila:
@@ -141,6 +150,9 @@ TARGET_CURRENCY=CLP
 EXCHANGE_RATE_CLP_PER_USD=
 FALLBACK_EXCHANGE_RATE_CLP_PER_USD=950
 EXCHANGE_RATE_MARGIN_CLP=5
+N8N_EXTRACT_WEBHOOK_URL=
+N8N_EXTRACT_API_KEY=
+N8N_EXTRACT_TIMEOUT_MS=180000
 ```
 
 Para Railway con volumen persistente en `/data`, usa:
@@ -152,6 +164,9 @@ TARGET_CURRENCY=CLP
 EXCHANGE_RATE_CLP_PER_USD=
 FALLBACK_EXCHANGE_RATE_CLP_PER_USD=950
 EXCHANGE_RATE_MARGIN_CLP=5
+N8N_EXTRACT_WEBHOOK_URL=https://n8nstudio-b9afe5bvcue9e5gv.brazilsouth-01.azurewebsites.net/webhook/embudo-extract-quotes
+N8N_EXTRACT_API_KEY=<clave_secreta>
+N8N_EXTRACT_TIMEOUT_MS=180000
 NODE_ENV=production
 ```
 
@@ -187,16 +202,15 @@ npm run start
 3. Valida la plantilla `.xlsx` y los PDFs.
 4. Crea un `ProcessingJob`.
 5. Guarda archivos en `uploads/{jobId}` o `${STORAGE_DIR}/uploads/{jobId}`.
-6. Extrae texto de cada PDF con `pdf-parse`.
-7. Detecta proveedor y parsea productos.
-8. Valida el JSON normalizado con Zod.
-9. Guarda resultados en SQLite con Prisma.
-10. Consolida productos equivalentes de forma conservadora.
-11. Abre la plantilla con ExcelJS.
-12. Ejecuta `clearTemplateDynamicFields()`.
-13. Rellena productos, proveedores y ofertas.
-14. Guarda `output/{jobId}/tabla-comparativa.xlsx` o `${STORAGE_DIR}/output/{jobId}/tabla-comparativa.xlsx`.
-15. `GET /api/download/{jobId}` entrega el archivo.
+6. Envía archivos + contexto (tipo de cambio, margen y datos de evaluación) al webhook n8n.
+7. Valida la respuesta JSON de n8n y la normaliza al modelo interno.
+8. Guarda resultados en SQLite con Prisma.
+9. Consolida productos equivalentes de forma conservadora.
+10. Abre la plantilla con ExcelJS.
+11. Ejecuta `clearTemplateDynamicFields()`.
+12. Rellena productos, proveedores y ofertas.
+13. Guarda `output/{jobId}/tabla-comparativa.xlsx` o `${STORAGE_DIR}/output/{jobId}/tabla-comparativa.xlsx`.
+14. `GET /api/download/{jobId}` entrega el archivo.
 
 ## Plantilla Excel
 
@@ -226,8 +240,8 @@ src/lib/excel/templateMap.ts
 
 ## Limitaciones actuales
 
-- Parsers de ADIS, Tecno Mercado y Echave Turri son iniciales y conservadores.
-- El parser genérico puede requerir ajustes por formato de PDF.
+- Si n8n no está configurado (`N8N_EXTRACT_WEBHOOK_URL` y `N8N_EXTRACT_API_KEY`), `/api/process` devuelve error.
+- El extractor n8n debe devolver documentos válidos para consolidar y generar Excel.
 - Si no se detecta moneda, marca `UNKNOWN` y agrega advertencia.
 - Si la similitud de productos no es clara, no fusiona automáticamente.
 - La plantilla actual permite 20 productos y 6 proveedores; lo extra genera advertencias.
