@@ -33,6 +33,8 @@ export const ExtractedQuoteItemSchema = z.object({
 
 export const ParsedQuoteSchema = z.object({
   supplierName: z.string().min(1),
+  supplierRut: z.string().optional(),
+  extractionSource: z.enum(["n8n", "local"]).optional(),
   quoteNumber: z.string().optional(),
   quoteDate: z.string().optional(),
   paymentCondition: z.string().optional(),

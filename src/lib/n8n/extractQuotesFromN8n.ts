@@ -42,6 +42,9 @@ export type N8nExtractInput = {
 
 export type N8nDocumentResponse = {
   ok: boolean;
+  valid: boolean | null;
+  isValid: boolean | null;
+  isValidQuotation: boolean | null;
   fileName: string;
   fileKind: string | null;
   detectedType: string;
@@ -156,6 +159,9 @@ const N8nItemSchema = z
 const N8nDocumentSchema = z
   .object({
     ok: z.boolean().optional().default(true),
+    valid: z.boolean().optional().nullable(),
+    isValid: z.boolean().optional().nullable(),
+    isValidQuotation: z.boolean().optional().nullable(),
     fileName: z.string().optional().default(""),
     fileKind: z.string().optional().nullable(),
     detectedType: z.string().optional().default("unknown"),
@@ -218,7 +224,7 @@ const N8nResponseSchema = z
   .passthrough();
 
 const NON_PRODUCT_HINTS =
-  /\b(subtotal|total neto|total general|total|iva|ila|observaciones?|condicion(?:es)?(?: comerciales)?|forma de pago|validez|garantia|garantia extendida|soporte|mantencion|instalacion|retiro|servicio)\b/i;
+  /\b(subtotal|total neto|total general|iva|ila|observaciones?|condicion(?:es)?(?: comerciales)?|forma de pago|validez)\b/i;
 
 function normalizeText(value: string) {
   return value
@@ -361,16 +367,43 @@ function invalidDocumentAction(kind: N8nDocumentKind) {
   return "Sube una cotizacion formal de proveedor con tabla de productos.";
 }
 
-function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocument {
+function isExplicitValidQuotation(document: N8nDocumentResponse) {
+  return (
+    document.valid === true ||
+    document.isValid === true ||
+    document.isValidQuotation === true
+  );
+}
+
+function derivedSupplierFromFilename(fileName: string) {
+  const baseName = fileName.replace(/\.[^.]+$/, "").trim();
+  return baseName.length > 0 ? baseName : "Proveedor no identificado";
+}
+
+function mapDocumentToQuote(
+  document: N8nDocumentResponse,
+  options: { trustedFromN8n?: boolean } = {}
+): NormalizedN8nDocument {
   const fileName = safeText(document.fileName) ?? "archivo-sin-nombre";
   const detectedType = normalizeDocumentKind(document.detectedType);
-  const supplierName =
-    safeText(document.supplier?.name ?? undefined) ??
-    safeText(document.supplierName ?? undefined);
+  const trustedDocument = options.trustedFromN8n || isExplicitValidQuotation(document);
   const docWarnings: string[] = [...document.warnings];
   if (document.error) docWarnings.push(document.error);
+  const supplierName =
+    safeText(document.supplierName ?? undefined) ??
+    safeText(document.supplier?.name ?? undefined) ??
+    (trustedDocument ? derivedSupplierFromFilename(fileName) : undefined);
+  const supplierRut =
+    safeText(document.supplierRut ?? undefined) ??
+    safeText(document.supplier?.rut ?? undefined);
 
-  if (!document.ok || detectedType !== "quote" || !supplierName) {
+  if (!safeText(document.supplierName ?? undefined) && !safeText(document.supplier?.name ?? undefined) && supplierName) {
+    docWarnings.push(
+      `${supplierName}: n8n no entrego proveedor explicito; se uso nombre derivado del archivo para mantener la cotizacion procesable.`
+    );
+  }
+
+  if ((!document.ok && !trustedDocument) || (detectedType !== "quote" && !trustedDocument) || !supplierName) {
     return {
       fileName,
       detectedType,
@@ -399,13 +432,20 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
       continue;
     }
 
+    const unitPriceInput =
+      parseNonNegativeNumber(rawItem.unitPriceClp) ??
+      parseNonNegativeNumber(rawItem.unitPriceCLP) ??
+      parseNonNegativeNumber(rawItem.unitPrice);
+    const totalInput =
+      parseNonNegativeNumber(rawItem.totalClp) ??
+      parseNonNegativeNumber(rawItem.totalCLP) ??
+      parseNonNegativeNumber(rawItem.total);
+    const quantity = parsePositiveNumber(rawItem.quantity);
     const classification = classifyLine(rawLine ?? description);
-    if (classification.omit) {
-      const amount =
-        parseNonNegativeNumber(rawItem.total) ??
-        parseNonNegativeNumber(rawItem.unitPrice) ??
-        parseNonNegativeNumber(document.shippingCost);
-      if (classification.category === "ENVIO_DESPACHO_FLETE" && amount && amount > 0) {
+
+    if (classification.category === "ENVIO_DESPACHO_FLETE") {
+      const amount = totalInput ?? unitPriceInput ?? parseNonNegativeNumber(document.shippingCost);
+      if (amount && amount > 0) {
         const lineCurrency = parseCurrency(rawItem.currency, `${rawLine ?? ""} ${document.currency ?? ""}`);
         quoteWarnings.push(
           `Costo asociado detectado y omitido de productos comparables: ${description} ${formatCostAmount(
@@ -419,24 +459,34 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
       continue;
     }
 
-    const quantity = parsePositiveNumber(rawItem.quantity);
-    if (!quantity) {
-      quoteWarnings.push(
-        `${supplierName}: ${description} omitido por no tener cantidad valida con evidencia suficiente.`
-      );
+    if (unitPriceInput === undefined && totalInput === undefined) {
+      quoteWarnings.push(`${supplierName}: ${description} omitido por no tener precio unitario ni total valido.`);
       continue;
     }
 
-    const unitPriceInput =
-      parseNonNegativeNumber(rawItem.unitPriceClp) ??
-      parseNonNegativeNumber(rawItem.unitPriceCLP) ??
-      parseNonNegativeNumber(rawItem.unitPrice);
-    const totalInput =
-      parseNonNegativeNumber(rawItem.totalClp) ??
-      parseNonNegativeNumber(rawItem.totalCLP) ??
-      parseNonNegativeNumber(rawItem.total);
-    if (unitPriceInput === undefined && totalInput === undefined) {
-      quoteWarnings.push(`${supplierName}: ${description} omitido por no tener precio unitario ni total valido.`);
+    if (classification.omit && !trustedDocument) {
+      quoteWarnings.push(`${supplierName}: ${description} omitida (${classification.reason}).`);
+      continue;
+    }
+
+    let effectiveQuantity = quantity;
+    if (!effectiveQuantity && trustedDocument && unitPriceInput !== undefined && totalInput !== undefined && unitPriceInput > 0) {
+      const inferredQuantity = totalInput / unitPriceInput;
+      if (Number.isFinite(inferredQuantity) && inferredQuantity > 0) {
+        const roundedQuantity = Math.round(inferredQuantity);
+        if (Math.abs(inferredQuantity - roundedQuantity) < 0.001 && roundedQuantity > 0) {
+          effectiveQuantity = roundedQuantity;
+          quoteWarnings.push(
+            `${supplierName}: cantidad inferida para ${description} usando total / precio unitario entregados por n8n.`
+          );
+        }
+      }
+    }
+
+    if (!effectiveQuantity) {
+      quoteWarnings.push(
+        `${supplierName}: ${description} omitido por no tener cantidad valida con evidencia suficiente.`
+      );
       continue;
     }
 
@@ -444,7 +494,7 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
     let total: number | null = null;
     if (unitPriceInput !== undefined) {
       unitPrice = unitPriceInput;
-      total = unitPriceInput * quantity;
+      total = unitPriceInput * effectiveQuantity;
       if (totalInput !== undefined && Math.abs(totalInput - total) > 2) {
         quoteWarnings.push(
           `${supplierName}: total corregido para ${description} por inconsistencia matematica (P.UNIT x CANT).`
@@ -452,7 +502,7 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
       }
     } else if (totalInput !== undefined) {
       total = totalInput;
-      unitPrice = quantity > 0 ? totalInput / quantity : null;
+      unitPrice = effectiveQuantity > 0 ? totalInput / effectiveQuantity : null;
       quoteWarnings.push(
         `${supplierName}: precio unitario calculado para ${description} porque no venia explicito en el archivo.`
       );
@@ -472,7 +522,7 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
       sourceItem: rawItem.sourceItem ?? rawItem.lineNumber ?? index + 1,
       description,
       normalizedProductKey: normalizeProductName(description),
-      quantity,
+      quantity: effectiveQuantity,
       unit: safeText(rawItem.unit) ?? "CU",
       currency: currency === "UNKNOWN" ? documentCurrency : currency,
       unitPrice,
@@ -500,6 +550,8 @@ function mapDocumentToQuote(document: N8nDocumentResponse): NormalizedN8nDocumen
 
   const parsedQuote: ParsedQuote = {
     supplierName,
+    supplierRut,
+    extractionSource: "n8n",
     quoteNumber: safeText(document.documentNumber) ?? undefined,
     quoteDate: safeText(document.documentDate) ?? undefined,
     paymentCondition: safeText(document.paymentTerms),
@@ -531,6 +583,9 @@ function parseSummaryValue(value: string | number | null | undefined) {
 function mapN8nDocument(document: z.infer<typeof N8nDocumentSchema>): N8nDocumentResponse {
   return {
     ok: document.ok,
+    valid: document.valid ?? null,
+    isValid: document.isValid ?? null,
+    isValidQuotation: document.isValidQuotation ?? null,
     fileName: safeText(document.fileName) ?? "",
     fileKind: safeText(document.fileKind) ?? null,
     detectedType: safeText(document.detectedType) ?? "unknown",
@@ -756,6 +811,8 @@ export async function extractQuotesFromN8n(input: N8nExtractInput): Promise<N8nE
 }
 
 export function mapN8nDocumentsToQuotes(response: N8nExtractResponse): MapN8nResult {
+  const usesValidatedCollections =
+    response.validQuotations.length > 0 || response.validDocuments.length > 0;
   const sourceDocuments =
     response.validQuotations.length > 0
       ? response.validQuotations.map((document) => ({
@@ -768,7 +825,11 @@ export function mapN8nDocumentsToQuotes(response: N8nExtractResponse): MapN8nRes
       : response.validDocuments.length > 0
       ? response.validDocuments
       : response.documents;
-  const documentResults = sourceDocuments.map(mapDocumentToQuote);
+  const documentResults = sourceDocuments.map((document) =>
+    mapDocumentToQuote(document, {
+      trustedFromN8n: usesValidatedCollections || isExplicitValidQuotation(document)
+    })
+  );
   const parsedQuotes = documentResults
     .filter((document): document is NormalizedN8nDocument & { parsedQuote: ParsedQuote } =>
       document.status === "processed" && Boolean(document.parsedQuote)
