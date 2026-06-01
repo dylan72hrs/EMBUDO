@@ -9,6 +9,7 @@ import { displayProductName } from "@/lib/normalize/normalizeProductName";
 import { parseMoney } from "@/lib/parser/parseMoney";
 import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 import type {
+  AssociatedCost,
   ComparisonItem,
   ConsolidatedComparison,
   Currency,
@@ -39,6 +40,7 @@ type ConversionTracker = {
 };
 
 type WarningSection = "TIPO DE CAMBIO" | "CONVERSION DE MONEDAS" | "LINEAS OMITIDAS" | "RIESGOS";
+type ComparisonMode = "basket" | "global-requirement";
 
 function formatWarning(section: WarningSection, message: string) {
   return `[${section}] ${message}`;
@@ -116,15 +118,43 @@ function extractAssociatedCostsFromWarnings(warnings: string[]) {
   };
 }
 
+function associatedCostTotalFromQuote(quote: ParsedQuote, target: Currency, exchangeRateValue: number | undefined) {
+  const structuredCosts = quote.associatedCosts ?? [];
+  const structuredTotal = structuredCosts.reduce((sum, cost) => {
+    const amount = associatedCostAmountToTarget(cost, target, exchangeRateValue);
+    return amount === null ? sum : sum + amount;
+  }, 0);
+  const warningCosts = extractAssociatedCostsFromWarnings(quote.warnings);
+
+  return {
+    total: structuredTotal > 0 ? structuredTotal : warningCosts.total,
+    details:
+      structuredCosts.length > 0
+        ? structuredCosts.map((cost) => `${cost.description} ${formatClp(associatedCostAmountToTarget(cost, "CLP", exchangeRateValue) ?? cost.amount)}`)
+        : warningCosts.details
+  };
+}
+
+function associatedCostAmountToTarget(
+  cost: AssociatedCost,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  const amount = target === "CLP" && cost.amountCLP !== undefined ? cost.amountCLP : cost.amount;
+  if (cost.currency === target || (target === "CLP" && cost.amountCLP !== undefined)) return amount;
+  if (!exchangeRateValue) return null;
+  return convertPrice(amount, cost.currency, target, exchangeRateValue);
+}
+
 function isRawAssociatedCostWarning(warning: string) {
   return warning.toLowerCase().includes("costo asociado detectado y omitido de productos comparables");
 }
 
-function createSupplierSummaries(quotes: ParsedQuote[]) {
+function createSupplierSummaries(quotes: ParsedQuote[], target: Currency, exchangeRateValue: number | undefined) {
   const supplierMap = new Map<string, SupplierSummary>();
 
   for (const quote of quotes) {
-    const associatedCosts = extractAssociatedCostsFromWarnings(quote.warnings);
+    const associatedCosts = associatedCostTotalFromQuote(quote, target, exchangeRateValue);
     supplierMap.set(quote.supplierName, {
       name: quote.supplierName,
       paymentCondition: quote.paymentCondition,
@@ -142,6 +172,23 @@ function isComparableProduct(item: ExtractedQuoteItem) {
   if (isAssociatedCostText(item.description) || isAssociatedCostText(item.rawLine ?? "")) return false;
   if (!item.rawLine && !item.rawBlock) return false;
   return item.unitPrice !== null || item.total !== null;
+}
+
+function comparableItems(quote: ParsedQuote) {
+  return quote.items.filter(isComparableProduct);
+}
+
+function chooseComparisonMode(quotes: ParsedQuote[]): ComparisonMode {
+  if (quotes.length < 2) return "basket";
+  const counts = quotes.map((quote) => comparableItems(quote).length);
+  const providersWithFewItems = counts.filter((count) => count > 0 && count <= 1).length;
+  const averageItems = counts.reduce((sum, count) => sum + count, 0) / Math.max(1, counts.length);
+
+  if (providersWithFewItems / quotes.length >= 0.6 && averageItems <= 1.5) {
+    return "global-requirement";
+  }
+
+  return "basket";
 }
 
 function findBestOffer(
@@ -276,6 +323,167 @@ function convertOfferToTarget(
   return normalizeOfferTotals(offer, quantity);
 }
 
+function quoteValueToTarget(
+  value: number | undefined,
+  quote: ParsedQuote,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  if (value === undefined) return undefined;
+  const sourceCurrency = quote.currency ?? target;
+  if (sourceCurrency === "UNKNOWN") return value;
+  if (sourceCurrency !== target && !exchangeRateValue) return value;
+  return convertPrice(value, sourceCurrency, target, exchangeRateValue ?? 1) ?? value;
+}
+
+function itemTotalToTarget(
+  item: ExtractedQuoteItem,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  const normalized = normalizeOfferTotals(
+    {
+      currency: item.currency,
+      unitPrice: item.unitPrice,
+      total: item.total,
+      confidence: item.confidence
+    },
+    item.quantity
+  );
+
+  if (!validPositive(normalized.total)) return 0;
+  if (item.currency === target || item.currency === "UNKNOWN") return normalized.total;
+  if (!exchangeRateValue) return normalized.total;
+  return convertPrice(normalized.total, item.currency, target, exchangeRateValue) ?? normalized.total;
+}
+
+function itemsTotalToTarget(
+  quote: ParsedQuote,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  return comparableItems(quote).reduce(
+    (sum, item) => sum + itemTotalToTarget(item, target, exchangeRateValue),
+    0
+  );
+}
+
+function explicitNetTotalToTarget(
+  quote: ParsedQuote,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  if (quote.quoteSubtotalCLP !== undefined && target === "CLP") return quote.quoteSubtotalCLP;
+  return quoteValueToTarget(quote.quoteSubtotal, quote, target, exchangeRateValue);
+}
+
+function explicitGrossTotalToTarget(
+  quote: ParsedQuote,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  if (quote.quoteTotalCLP !== undefined && target === "CLP") return quote.quoteTotalCLP;
+  return quoteValueToTarget(quote.quoteTotal, quote, target, exchangeRateValue);
+}
+
+function calculateOfferTotals(
+  quote: ParsedQuote,
+  target: Currency,
+  exchangeRateValue: number | undefined
+) {
+  const associatedCosts = associatedCostTotalFromQuote(quote, target, exchangeRateValue);
+  const itemsTotal = itemsTotalToTarget(quote, target, exchangeRateValue);
+  const explicitNet = explicitNetTotalToTarget(quote, target, exchangeRateValue);
+  const explicitGross = explicitGrossTotalToTarget(quote, target, exchangeRateValue);
+  const tax =
+    target === "CLP" && quote.quoteTaxCLP !== undefined
+      ? quote.quoteTaxCLP
+      : quoteValueToTarget(quote.quoteTax, quote, target, exchangeRateValue);
+  const estimatedNet = explicitNet === undefined;
+  const offerNetTotal = explicitNet ?? itemsTotal + associatedCosts.total;
+  const offerGrossTotal =
+    explicitGross ?? (tax !== undefined ? offerNetTotal + tax : offerNetTotal);
+
+  return {
+    associatedCosts,
+    itemsTotal,
+    offerNetTotal,
+    offerGrossTotal,
+    estimatedNet,
+    estimatedGross: explicitGross === undefined
+  };
+}
+
+function globalRequirementTitle(quotes: ParsedQuote[]) {
+  const firstDescription = quotes.flatMap(comparableItems)[0]?.description;
+  if (!firstDescription) return "Requerimiento comparativo";
+  const title = displayProductName(firstDescription);
+  return title.length > 90 ? `${title.slice(0, 87).trim()}...` : title;
+}
+
+function buildGlobalRequirementRows(
+  quotes: ParsedQuote[],
+  outputCurrency: Currency,
+  exchangeRate: number | undefined,
+  warnings: string[]
+) {
+  const offers: ComparisonItem["offers"] = {};
+  const matchingWarnings: string[] = [];
+
+  for (const quote of quotes) {
+    const totals = calculateOfferTotals(quote, outputCurrency, exchangeRate);
+    if (!validPositive(totals.offerNetTotal)) continue;
+    if (totals.estimatedNet) {
+      warnings.push(
+        formatWarning(
+          "RIESGOS",
+          `${quote.supplierName}: total neto de oferta estimado desde lineas valorizadas y costos asociados.`
+        )
+      );
+    }
+    if (totals.associatedCosts.total > 0) {
+      matchingWarnings.push(
+        `${quote.supplierName}: costos asociados incluidos en oferta global por ${formatClp(
+          totals.associatedCosts.total
+        )}.`
+      );
+    }
+
+    offers[quote.supplierName] = {
+      currency: outputCurrency,
+      originalCurrency: quote.currency ?? outputCurrency,
+      wasConverted: quote.currency !== undefined && quote.currency !== outputCurrency && quote.currency !== "UNKNOWN",
+      exchangeRateUsed:
+        quote.currency !== undefined && quote.currency !== outputCurrency && quote.currency !== "UNKNOWN"
+          ? exchangeRate
+          : undefined,
+      unitPrice: totals.offerNetTotal,
+      total: totals.offerNetTotal,
+      confidence: 0.9
+    };
+  }
+
+  return [
+    {
+      seedItem: {
+        description: globalRequirementTitle(quotes),
+        normalizedProductKey: "requerimiento-global",
+        quantity: 1,
+        unit: "SERV",
+        currency: outputCurrency,
+        unitPrice: null,
+        total: null,
+        rawLine: "Requerimiento comparativo global",
+        rawBlock: "Requerimiento comparativo global",
+        extractionMethod: "normalizador comparativo",
+        confidence: 0.9
+      } satisfies ExtractedQuoteItem,
+      offers,
+      matchingWarnings
+    }
+  ];
+}
+
 function attachQuoteOfferToRow(
   row: WorkingRow,
   quote: ParsedQuote,
@@ -339,7 +547,13 @@ export async function consolidateQuotes(
   exchangeRateRequest: ExchangeRateRequest = {},
   options: { exchangeRate?: ExchangeRateResult } = {}
 ): Promise<ConsolidatedComparison> {
-  const scope = buildComparisonScope(quotes);
+  const outputCurrency = targetCurrency();
+  const exchange = options.exchangeRate ?? (await getExchangeRate(exchangeRateRequest));
+  const mode = chooseComparisonMode(quotes);
+  const scope =
+    mode === "basket"
+      ? buildComparisonScope(quotes)
+      : { baseSupplierName: "Requerimiento global", baseItems: [], warnings: [] };
   const warnings: string[] = [
     ...scope.warnings,
     ...quotes.flatMap((quote) => quote.warnings).filter((warning) => !isRawAssociatedCostWarning(warning))
@@ -353,9 +567,9 @@ export async function consolidateQuotes(
     );
   }
 
-  const suppliers = createSupplierSummaries(quotes);
+  const suppliers = createSupplierSummaries(quotes, outputCurrency, exchange.finalRate);
   for (const quote of quotes) {
-    const associatedCosts = extractAssociatedCostsFromWarnings(quote.warnings);
+    const associatedCosts = associatedCostTotalFromQuote(quote, outputCurrency, exchange.finalRate);
     if (associatedCosts.total <= 0) continue;
     warnings.push(
       formatWarning(
@@ -367,11 +581,9 @@ export async function consolidateQuotes(
     );
   }
   const usedBySupplier = new Map<string, Set<ExtractedQuoteItem>>();
-  const outputCurrency = targetCurrency();
   const requiresConversion = quotes.some((quote) =>
     quote.items.some((item) => isComparableProduct(item) && itemNeedsConversion(item, outputCurrency))
   );
-  const exchange = options.exchangeRate ?? (await getExchangeRate(exchangeRateRequest));
   const conversionTracker: ConversionTracker = { applied: false, convertedPerSupplier: new Map() };
 
   if (requiresConversion) {
@@ -382,9 +594,12 @@ export async function consolidateQuotes(
     usedBySupplier.set(quote.supplierName, new Set<ExtractedQuoteItem>());
   }
 
-  const rows: WorkingRow[] = [];
+  const rows: WorkingRow[] =
+    mode === "global-requirement"
+      ? buildGlobalRequirementRows(quotes, outputCurrency, exchange.finalRate, warnings)
+      : [];
 
-  for (const baseItem of scope.baseItems.filter(isComparableProduct)) {
+  for (const baseItem of mode === "basket" ? scope.baseItems.filter(isComparableProduct) : []) {
     const row: WorkingRow = {
       seedItem: baseItem,
       offers: {},
@@ -408,7 +623,7 @@ export async function consolidateQuotes(
     }
   }
 
-  for (const quote of quotes) {
+  for (const quote of mode === "basket" ? quotes : []) {
     const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
 
     for (const item of quote.items) {
@@ -494,7 +709,9 @@ export async function consolidateQuotes(
     const usdCount = comparableItems.filter((item) => item.currency === "USD").length;
     const clpCount = comparableItems.filter((item) => item.currency === "CLP").length;
     const unknownCount = comparableItems.filter((item) => item.currency === "UNKNOWN").length;
-    const convertedCount = conversionTracker.convertedPerSupplier.get(quote.supplierName) ?? 0;
+    const convertedCount =
+      conversionTracker.convertedPerSupplier.get(quote.supplierName) ??
+      (mode === "global-requirement" && outputCurrency === "CLP" ? usdCount : 0);
 
     if (usdCount > 0 && clpCount > 0) {
       warnings.push(

@@ -167,7 +167,7 @@ export function ProcessingSummary({ result, onFolioAssigned }: Props) {
           <p className="mt-2 text-sm font-medium">{result.suppliers?.join(", ") || "Sin proveedores"}</p>
         </div>
         <div className="rounded-lg border border-slate-700 bg-slate-900/70 p-4">
-          <p className="text-xs uppercase text-slate-400">Productos detectados</p>
+          <p className="text-xs uppercase text-slate-400">Requerimientos comparativos</p>
           <p className="mt-2 text-sm font-medium">{result.itemsDetected ?? 0}</p>
         </div>
       </div>

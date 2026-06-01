@@ -118,7 +118,7 @@ export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props
         </div>
         <div className="text-right text-[10px] text-white/70">
           <p>{analytics.suppliers.length} proveedores</p>
-          <p>{totalProducts} productos</p>
+          <p>{totalProducts} requerimientos comparativos</p>
           <p>{analytics.warningsCount} advertencias</p>
         </div>
       </div>

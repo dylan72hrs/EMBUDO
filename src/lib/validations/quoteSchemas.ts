@@ -31,12 +31,30 @@ export const ExtractedQuoteItemSchema = z.object({
   confidence: z.number().min(0).max(1).default(0.5)
 });
 
+export const AssociatedCostSchema = z.object({
+  description: z.string().min(1),
+  amount: z.number().nonnegative(),
+  currency: CurrencySchema,
+  amountCLP: z.number().nonnegative().optional(),
+  isEstimated: z.boolean().optional()
+});
+
 export const ParsedQuoteSchema = z.object({
   supplierName: z.string().min(1),
   supplierRut: z.string().optional(),
   extractionSource: z.enum(["n8n", "local"]).optional(),
+  currency: CurrencySchema.optional(),
   quoteNumber: z.string().optional(),
   quoteDate: z.string().optional(),
+  quoteSubtotal: z.number().nonnegative().optional(),
+  quoteTax: z.number().nonnegative().optional(),
+  quoteTotal: z.number().nonnegative().optional(),
+  quoteSubtotalCLP: z.number().nonnegative().optional(),
+  quoteTaxCLP: z.number().nonnegative().optional(),
+  quoteTotalCLP: z.number().nonnegative().optional(),
+  offerNetTotalCLP: z.number().nonnegative().optional(),
+  offerGrossTotalCLP: z.number().nonnegative().optional(),
+  associatedCosts: z.array(AssociatedCostSchema).optional(),
   paymentCondition: z.string().optional(),
   deliveryTime: z.string().optional(),
   pricesIncludeVat: z.boolean().default(false),
@@ -86,6 +104,7 @@ export const ConsolidatedComparisonSchema = z.object({
 });
 
 export type Currency = z.infer<typeof CurrencySchema>;
+export type AssociatedCost = z.infer<typeof AssociatedCostSchema>;
 export type ExtractedQuoteItem = z.infer<typeof ExtractedQuoteItemSchema>;
 export type ParsedQuote = z.infer<typeof ParsedQuoteSchema>;
 export type SupplierSummary = z.infer<typeof SupplierSummarySchema>;

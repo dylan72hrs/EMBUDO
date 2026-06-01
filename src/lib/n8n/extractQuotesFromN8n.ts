@@ -4,7 +4,7 @@ import { detectCurrency } from "@/lib/parser/detectCurrency";
 import { parseMoney } from "@/lib/parser/parseMoney";
 import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 import type { AdditionalEvaluationData } from "@/lib/excel/generateComparisonExcel";
-import type { Currency, ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
+import type { AssociatedCost, Currency, ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
@@ -27,6 +27,15 @@ type N8nItem = {
   confidence?: string | number | null;
   rawLine?: string | null;
   sourceItem?: string | number | null;
+};
+
+type N8nAssociatedCost = {
+  description?: string | null;
+  type?: string | null;
+  amount?: string | number | null;
+  amountClp?: string | number | null;
+  amountCLP?: string | number | null;
+  currency?: string | null;
 };
 
 export type N8nExtractInput = {
@@ -61,7 +70,14 @@ export type N8nDocumentResponse = {
   paymentTerms: string | null;
   deliveryTime: string | null;
   availability: string | null;
+  subtotal: string | number | null;
+  tax: string | number | null;
+  total: string | number | null;
+  quoteSubtotal: string | number | null;
+  quoteTax: string | number | null;
+  quoteTotal: string | number | null;
   shippingCost: string | number | null;
+  associatedCosts: N8nAssociatedCost[];
   items: N8nItem[];
   warnings: string[];
   sourceFileKind: string | null;
@@ -156,6 +172,17 @@ const N8nItemSchema = z
   })
   .passthrough();
 
+const N8nAssociatedCostSchema = z
+  .object({
+    description: z.string().optional().nullable(),
+    type: z.string().optional().nullable(),
+    amount: z.union([z.string(), z.number()]).optional().nullable(),
+    amountClp: z.union([z.string(), z.number()]).optional().nullable(),
+    amountCLP: z.union([z.string(), z.number()]).optional().nullable(),
+    currency: z.string().optional().nullable()
+  })
+  .passthrough();
+
 const N8nDocumentSchema = z
   .object({
     ok: z.boolean().optional().default(true),
@@ -181,7 +208,14 @@ const N8nDocumentSchema = z
     paymentTerms: z.string().optional().nullable(),
     deliveryTime: z.string().optional().nullable(),
     availability: z.string().optional().nullable(),
+    subtotal: z.union([z.string(), z.number()]).optional().nullable(),
+    tax: z.union([z.string(), z.number()]).optional().nullable(),
+    total: z.union([z.string(), z.number()]).optional().nullable(),
+    quoteSubtotal: z.union([z.string(), z.number()]).optional().nullable(),
+    quoteTax: z.union([z.string(), z.number()]).optional().nullable(),
+    quoteTotal: z.union([z.string(), z.number()]).optional().nullable(),
     shippingCost: z.union([z.string(), z.number()]).optional().nullable(),
+    associatedCosts: z.array(N8nAssociatedCostSchema).optional().default([]),
     items: z.array(N8nItemSchema).optional().default([]),
     warnings: z.array(z.string()).optional().default([]),
     sourceFileKind: z.string().optional().nullable(),
@@ -347,6 +381,48 @@ function itemConfidence(value: unknown) {
   return parsed;
 }
 
+function parseClpPreferred(primary: unknown, fallback: unknown) {
+  return parseNonNegativeNumber(primary) ?? parseNonNegativeNumber(fallback);
+}
+
+function normalizeAssociatedCosts(
+  document: N8nDocumentResponse,
+  documentCurrency: Currency
+): AssociatedCost[] {
+  const costs: AssociatedCost[] = [];
+
+  for (const [index, cost] of document.associatedCosts.entries()) {
+    const description =
+      safeText(cost.description) ??
+      safeText(cost.type) ??
+      `Costo asociado ${index + 1}`;
+    const amountCLP =
+      parseNonNegativeNumber(cost.amountClp) ??
+      parseNonNegativeNumber(cost.amountCLP);
+    const amount = amountCLP ?? parseNonNegativeNumber(cost.amount);
+    if (amount === undefined) continue;
+
+    costs.push({
+      description,
+      amount,
+      amountCLP,
+      currency: amountCLP !== undefined ? "CLP" : parseCurrency(cost.currency, document.currency ?? undefined) || documentCurrency
+    });
+  }
+
+  const shippingCost = parseNonNegativeNumber(document.shippingCost);
+  if (shippingCost !== undefined && shippingCost > 0) {
+    costs.push({
+      description: "Costo de envio/despacho",
+      amount: shippingCost,
+      amountCLP: documentCurrency === "CLP" ? shippingCost : undefined,
+      currency: documentCurrency
+    });
+  }
+
+  return costs;
+}
+
 function invalidDocumentReason(kind: N8nDocumentKind) {
   if (kind === "purchase_request") {
     return "Este archivo no parece ser una cotizacion valida. Fue clasificado como Solicitud OC / documento interno.";
@@ -421,6 +497,7 @@ function mapDocumentToQuote(
   }
 
   const documentCurrency = parseCurrency(document.currency, document.currency ?? undefined);
+  const associatedCosts = normalizeAssociatedCosts(document, documentCurrency);
   const quoteWarnings: string[] = [...docWarnings];
   const validItems: ExtractedQuoteItem[] = [];
 
@@ -432,14 +509,14 @@ function mapDocumentToQuote(
       continue;
     }
 
-    const unitPriceInput =
+    const unitPriceCLP =
       parseNonNegativeNumber(rawItem.unitPriceClp) ??
-      parseNonNegativeNumber(rawItem.unitPriceCLP) ??
-      parseNonNegativeNumber(rawItem.unitPrice);
-    const totalInput =
+      parseNonNegativeNumber(rawItem.unitPriceCLP);
+    const totalCLP =
       parseNonNegativeNumber(rawItem.totalClp) ??
-      parseNonNegativeNumber(rawItem.totalCLP) ??
-      parseNonNegativeNumber(rawItem.total);
+      parseNonNegativeNumber(rawItem.totalCLP);
+    const unitPriceInput = unitPriceCLP ?? parseNonNegativeNumber(rawItem.unitPrice);
+    const totalInput = totalCLP ?? parseNonNegativeNumber(rawItem.total);
     const quantity = parsePositiveNumber(rawItem.quantity);
     const classification = classifyLine(rawLine ?? description);
 
@@ -508,10 +585,10 @@ function mapDocumentToQuote(
       );
     }
 
-    const currency = parseCurrency(
-      rawItem.currency,
-      `${rawItem.currency ?? ""} ${rawLine ?? ""} ${document.currency ?? ""}`
-    );
+    const currency =
+      unitPriceCLP !== undefined || totalCLP !== undefined
+        ? "CLP"
+        : parseCurrency(rawItem.currency, `${rawItem.currency ?? ""} ${rawLine ?? ""} ${document.currency ?? ""}`);
     if (currency === "UNKNOWN") {
       quoteWarnings.push(
         `${supplierName}: moneda no detectada con seguridad para ${description}; revisar manualmente.`
@@ -552,8 +629,17 @@ function mapDocumentToQuote(
     supplierName,
     supplierRut,
     extractionSource: "n8n",
+    currency: documentCurrency,
     quoteNumber: safeText(document.documentNumber) ?? undefined,
     quoteDate: safeText(document.documentDate) ?? undefined,
+    quoteSubtotal: parseClpPreferred(document.quoteSubtotal, document.subtotal),
+    quoteTax: parseClpPreferred(document.quoteTax, document.tax),
+    quoteTotal: parseClpPreferred(document.quoteTotal, document.total),
+    quoteSubtotalCLP:
+      documentCurrency === "CLP" ? parseClpPreferred(document.quoteSubtotal, document.subtotal) : undefined,
+    quoteTaxCLP: documentCurrency === "CLP" ? parseClpPreferred(document.quoteTax, document.tax) : undefined,
+    quoteTotalCLP: documentCurrency === "CLP" ? parseClpPreferred(document.quoteTotal, document.total) : undefined,
+    associatedCosts,
     paymentCondition: safeText(document.paymentTerms),
     deliveryTime: safeText(document.deliveryTime),
     pricesIncludeVat: false,
@@ -604,9 +690,16 @@ function mapN8nDocument(document: z.infer<typeof N8nDocumentSchema>): N8nDocumen
     paymentTerms: safeText(document.paymentTerms) ?? null,
     deliveryTime: safeText(document.deliveryTime) ?? null,
     availability: safeText(document.availability) ?? null,
+    subtotal: parseNonNegativeNumber(document.subtotal) ?? (safeText(document.subtotal) ?? null),
+    tax: parseNonNegativeNumber(document.tax) ?? (safeText(document.tax) ?? null),
+    total: parseNonNegativeNumber(document.total) ?? (safeText(document.total) ?? null),
+    quoteSubtotal: parseNonNegativeNumber(document.quoteSubtotal) ?? (safeText(document.quoteSubtotal) ?? null),
+    quoteTax: parseNonNegativeNumber(document.quoteTax) ?? (safeText(document.quoteTax) ?? null),
+    quoteTotal: parseNonNegativeNumber(document.quoteTotal) ?? (safeText(document.quoteTotal) ?? null),
     shippingCost:
       parseNonNegativeNumber(document.shippingCost) ??
       (safeText(document.shippingCost) ?? null),
+    associatedCosts: document.associatedCosts as N8nAssociatedCost[],
     items: document.items as N8nItem[],
     warnings: document.warnings,
     sourceFileKind: safeText(document.sourceFileKind) ?? null,
