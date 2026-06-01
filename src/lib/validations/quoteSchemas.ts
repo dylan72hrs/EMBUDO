@@ -46,6 +46,9 @@ export const ParsedQuoteSchema = z.object({
   currency: CurrencySchema.optional(),
   quoteNumber: z.string().optional(),
   quoteDate: z.string().optional(),
+  subtotal: z.number().nonnegative().optional(),
+  tax: z.number().nonnegative().optional(),
+  total: z.number().nonnegative().optional(),
   quoteSubtotal: z.number().nonnegative().optional(),
   quoteTax: z.number().nonnegative().optional(),
   quoteTotal: z.number().nonnegative().optional(),
@@ -67,7 +70,11 @@ export const SupplierSummarySchema = z.object({
   paymentCondition: z.string().optional(),
   deliveryTime: z.string().optional(),
   credit: z.string().optional(),
-  associatedCosts: z.string().optional()
+  associatedCosts: z.string().optional(),
+  offerNetTotalCLP: z.number().nonnegative().nullable().optional(),
+  offerGrossTotalCLP: z.number().nonnegative().nullable().optional(),
+  totalsSource: z.string().optional(),
+  totalsEstimated: z.boolean().optional()
 });
 
 export const SupplierOfferSchema = z.object({

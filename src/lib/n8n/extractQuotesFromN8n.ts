@@ -381,10 +381,6 @@ function itemConfidence(value: unknown) {
   return parsed;
 }
 
-function parseClpPreferred(primary: unknown, fallback: unknown) {
-  return parseNonNegativeNumber(primary) ?? parseNonNegativeNumber(fallback);
-}
-
 function normalizeAssociatedCosts(
   document: N8nDocumentResponse,
   documentCurrency: Currency
@@ -632,13 +628,16 @@ function mapDocumentToQuote(
     currency: documentCurrency,
     quoteNumber: safeText(document.documentNumber) ?? undefined,
     quoteDate: safeText(document.documentDate) ?? undefined,
-    quoteSubtotal: parseClpPreferred(document.quoteSubtotal, document.subtotal),
-    quoteTax: parseClpPreferred(document.quoteTax, document.tax),
-    quoteTotal: parseClpPreferred(document.quoteTotal, document.total),
+    subtotal: parseNonNegativeNumber(document.subtotal),
+    tax: parseNonNegativeNumber(document.tax),
+    total: parseNonNegativeNumber(document.total),
+    quoteSubtotal: parseNonNegativeNumber(document.quoteSubtotal),
+    quoteTax: parseNonNegativeNumber(document.quoteTax),
+    quoteTotal: parseNonNegativeNumber(document.quoteTotal),
     quoteSubtotalCLP:
-      documentCurrency === "CLP" ? parseClpPreferred(document.quoteSubtotal, document.subtotal) : undefined,
-    quoteTaxCLP: documentCurrency === "CLP" ? parseClpPreferred(document.quoteTax, document.tax) : undefined,
-    quoteTotalCLP: documentCurrency === "CLP" ? parseClpPreferred(document.quoteTotal, document.total) : undefined,
+      documentCurrency === "CLP" ? parseNonNegativeNumber(document.quoteSubtotal) : undefined,
+    quoteTaxCLP: documentCurrency === "CLP" ? parseNonNegativeNumber(document.quoteTax) : undefined,
+    quoteTotalCLP: documentCurrency === "CLP" ? parseNonNegativeNumber(document.quoteTotal) : undefined,
     associatedCosts,
     paymentCondition: safeText(document.paymentTerms),
     deliveryTime: safeText(document.deliveryTime),

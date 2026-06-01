@@ -33,6 +33,7 @@ type Props = {
 const WARNING_SECTIONS = [
   "TIPO DE CAMBIO",
   "CONVERSION DE MONEDAS",
+  "COSTOS ASOCIADOS",
   "LINEAS OMITIDAS",
   "RIESGOS"
 ] as const;

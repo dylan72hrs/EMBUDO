@@ -4,6 +4,8 @@ export type AnalyticsSupplier = {
   name: string;
   total: number;
   productsQuoted: number;
+  totalBasis: "net";
+  estimated: boolean;
 };
 
 export type AnalyticsProductOffer = {
@@ -71,13 +73,6 @@ function exchangeRateSource(mode: AppliedExchangeRate["mode"] | "unknown") {
   return "No disponible";
 }
 
-function parseAssociatedCosts(value: string | undefined) {
-  if (!value) return 0;
-  const normalized = value.replace(/[^\d,.-]/g, "").replace(/\./g, "").replace(",", ".");
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
-}
-
 function analyticsByProduct(items: ComparisonItem[], supplierNames: string[]) {
   return items.map((item) => {
     const quantity = safeQuantity(item.quantity);
@@ -133,13 +128,18 @@ export function buildPurchaseAnalytics(
 
   const suppliers = supplierNames.map((name) => {
     const stats = supplierTotals.get(name);
-    const associatedCosts = parseAssociatedCosts(
-      consolidated.suppliers.find((supplier) => supplier.name === name)?.associatedCosts
-    );
+    const supplierSummary = consolidated.suppliers.find((supplier) => supplier.name === name);
+    const economicTotal =
+      typeof supplierSummary?.offerNetTotalCLP === "number" && Number.isFinite(supplierSummary.offerNetTotalCLP)
+        ? supplierSummary.offerNetTotalCLP
+        : stats?.total ?? 0;
+
     return {
       name,
-      total: (stats?.total ?? 0) + associatedCosts,
-      productsQuoted: stats?.productsQuoted ?? 0
+      total: economicTotal,
+      productsQuoted: stats?.productsQuoted ?? 0,
+      totalBasis: "net" as const,
+      estimated: supplierSummary?.totalsEstimated === true
     };
   });
 

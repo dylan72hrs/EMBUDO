@@ -4,6 +4,7 @@ import {
   type ExchangeRateRequest,
   type ExchangeRateResult
 } from "@/lib/currency/getExchangeRate";
+import { calculateQuoteEconomicTotals } from "@/lib/normalize/calculateQuoteEconomicTotals";
 import { compareToBaseItem } from "@/lib/normalize/matchProducts";
 import { displayProductName } from "@/lib/normalize/normalizeProductName";
 import { parseMoney } from "@/lib/parser/parseMoney";
@@ -39,11 +40,20 @@ type ConversionTracker = {
   convertedPerSupplier: Map<string, number>;
 };
 
-type WarningSection = "TIPO DE CAMBIO" | "CONVERSION DE MONEDAS" | "LINEAS OMITIDAS" | "RIESGOS";
+type WarningSection =
+  | "TIPO DE CAMBIO"
+  | "CONVERSION DE MONEDAS"
+  | "COSTOS ASOCIADOS"
+  | "LINEAS OMITIDAS"
+  | "RIESGOS";
 type ComparisonMode = "basket" | "global-requirement";
 
 function formatWarning(section: WarningSection, message: string) {
   return `[${section}] ${message}`;
+}
+
+function economicWarningSection(message: string): WarningSection {
+  return message.toLowerCase().includes("costo") ? "COSTOS ASOCIADOS" : "RIESGOS";
 }
 
 function supplierSort(a: SupplierSummary, b: SupplierSummary) {
@@ -119,6 +129,17 @@ function extractAssociatedCostsFromWarnings(warnings: string[]) {
 }
 
 function associatedCostTotalFromQuote(quote: ParsedQuote, target: Currency, exchangeRateValue: number | undefined) {
+  if (target === "CLP") {
+    const totals = calculateQuoteEconomicTotals(quote, exchangeRateValue);
+    return {
+      total: totals.associatedCostTotalCLP,
+      details:
+        quote.associatedCosts && quote.associatedCosts.length > 0
+          ? quote.associatedCosts.map((cost) => `${cost.description} ${formatClp(cost.amountCLP ?? cost.amount)}`)
+          : extractAssociatedCostsFromWarnings(quote.warnings).details
+    };
+  }
+
   const structuredCosts = quote.associatedCosts ?? [];
   const structuredTotal = structuredCosts.reduce((sum, cost) => {
     const amount = associatedCostAmountToTarget(cost, target, exchangeRateValue);
@@ -155,11 +176,16 @@ function createSupplierSummaries(quotes: ParsedQuote[], target: Currency, exchan
 
   for (const quote of quotes) {
     const associatedCosts = associatedCostTotalFromQuote(quote, target, exchangeRateValue);
+    const economicTotals = calculateQuoteEconomicTotals(quote, exchangeRateValue);
     supplierMap.set(quote.supplierName, {
       name: quote.supplierName,
       paymentCondition: quote.paymentCondition,
       deliveryTime: quote.deliveryTime,
-      associatedCosts: associatedCosts.total > 0 ? String(Math.round(associatedCosts.total)) : undefined
+      associatedCosts: associatedCosts.total > 0 ? String(Math.round(associatedCosts.total)) : undefined,
+      offerNetTotalCLP: economicTotals.offerNetTotalCLP,
+      offerGrossTotalCLP: economicTotals.offerGrossTotalCLP,
+      totalsSource: economicTotals.totalsSource,
+      totalsEstimated: economicTotals.estimated
     });
   }
 
@@ -391,14 +417,23 @@ function calculateOfferTotals(
   target: Currency,
   exchangeRateValue: number | undefined
 ) {
+  if (target === "CLP") {
+    const totals = calculateQuoteEconomicTotals(quote, exchangeRateValue);
+    return {
+      associatedCosts: associatedCostTotalFromQuote(quote, target, exchangeRateValue),
+      itemsTotal: totals.itemsTotalCLP,
+      offerNetTotal: totals.offerNetTotalCLP ?? 0,
+      offerGrossTotal: totals.offerGrossTotalCLP,
+      estimatedNet: totals.explicitNetTotalCLP === null,
+      estimatedGross: totals.explicitGrossTotalCLP === null
+    };
+  }
+
   const associatedCosts = associatedCostTotalFromQuote(quote, target, exchangeRateValue);
   const itemsTotal = itemsTotalToTarget(quote, target, exchangeRateValue);
   const explicitNet = explicitNetTotalToTarget(quote, target, exchangeRateValue);
   const explicitGross = explicitGrossTotalToTarget(quote, target, exchangeRateValue);
-  const tax =
-    target === "CLP" && quote.quoteTaxCLP !== undefined
-      ? quote.quoteTaxCLP
-      : quoteValueToTarget(quote.quoteTax, quote, target, exchangeRateValue);
+  const tax = quoteValueToTarget(quote.quoteTax, quote, target, exchangeRateValue);
   const estimatedNet = explicitNet === undefined;
   const offerNetTotal = explicitNet ?? itemsTotal + associatedCosts.total;
   const offerGrossTotal =
@@ -569,12 +604,19 @@ export async function consolidateQuotes(
 
   const suppliers = createSupplierSummaries(quotes, outputCurrency, exchange.finalRate);
   for (const quote of quotes) {
+    const economicTotals = calculateQuoteEconomicTotals(quote, exchange.finalRate);
+    warnings.push(
+      ...economicTotals.warnings.map((warning) =>
+        formatWarning(economicWarningSection(warning), warning)
+      )
+    );
+
     const associatedCosts = associatedCostTotalFromQuote(quote, outputCurrency, exchange.finalRate);
     if (associatedCosts.total <= 0) continue;
     warnings.push(
       formatWarning(
-        "LINEAS OMITIDAS",
-        `${quote.supplierName} incluye costos asociados: ${associatedCosts.details.join(", ")}. Total: ${formatClp(
+        "COSTOS ASOCIADOS",
+        `${quote.supplierName} incluye cargos complementarios: ${associatedCosts.details.join(", ")}. Total: ${formatClp(
           associatedCosts.total
         )}.`
       )

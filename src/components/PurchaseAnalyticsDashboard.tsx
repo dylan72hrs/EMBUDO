@@ -75,14 +75,6 @@ function createConsistencyMap(analytics: PurchaseAnalytics) {
   return map;
 }
 
-function optimizedOrderTotal(analytics: PurchaseAnalytics) {
-  return analytics.products.reduce((sum, product) => {
-    if (!product.offers.length) return sum;
-    const min = Math.min(...product.offers.map((offer) => offer.total));
-    return sum + min;
-  }, 0);
-}
-
 export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props) {
   const totalProducts = analytics.products.length;
   const suppliersByCost = [...analytics.suppliers]
@@ -92,7 +84,7 @@ export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props
   const maxSupplierSpend = Math.max(...suppliersByCost.map((supplier) => supplier.total), 0);
   const consistencyMap = createConsistencyMap(analytics);
 
-  const optimizedTotal = optimizedOrderTotal(analytics);
+  const optimizedTotal = suppliersByCost[0]?.total ?? 0;
   const referenceBudgetRaw =
     typeof budgetObjective === "number" && Number.isFinite(budgetObjective) && budgetObjective > 0
       ? budgetObjective
@@ -127,7 +119,7 @@ export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props
         <article className="embudo-analytics-card embudo-widget-card">
           <div className="mb-2 flex items-center justify-between">
             <h4 className="embudo-widget-title">Concentracion de Gasto</h4>
-            <span className="embudo-widget-meta">CLP por proveedor</span>
+            <span className="embudo-widget-meta">CLP neto por proveedor</span>
           </div>
           <div className="space-y-2">
             {suppliersByCost.map((supplier) => {
@@ -137,7 +129,10 @@ export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props
                 <div key={supplier.name} className="space-y-1">
                   <div className="flex items-center justify-between text-[11px] text-white/90">
                     <span className="truncate">{supplier.name}</span>
-                    <span>{formatClp(supplier.total)}</span>
+                    <span>
+                      {formatClp(supplier.total)}
+                      {supplier.estimated ? " est." : ""}
+                    </span>
                   </div>
                   <div className="h-2 rounded-full bg-slate-900/75">
                     <div className="embudo-analytics-bar h-full rounded-full" style={{ width: `${width}%` }} />
@@ -217,11 +212,11 @@ export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props
         <article className="embudo-analytics-card embudo-widget-card">
           <div className="mb-2 flex items-center justify-between">
             <h4 className="embudo-widget-title">Margen de Ahorro</h4>
-            <span className="embudo-widget-meta">Orden optimizada vs presupuesto de referencia</span>
+            <span className="embudo-widget-meta">Mejor oferta neta vs presupuesto de referencia</span>
           </div>
 
           <div className="space-y-2 text-[11px] text-white/85">
-            <p>Orden optimizada: {formatClp(optimizedTotal)}</p>
+            <p>Mejor oferta neta: {formatClp(optimizedTotal)}</p>
             <p>
               {usesManualBudget ? "Presupuesto objetivo" : "Presupuesto de referencia"}: {formatClp(referenceBudget)}
             </p>
