@@ -66,8 +66,12 @@ export async function GET(request: Request, context: RouteContext) {
   const file = await readFile(job.outputExcelPath ?? outputExcelPath(jobId));
   const safeFolio = job.folio ? job.folio.replace(/[^\w\-]/g, "_") : null;
   const filename = safeFolio ? `tabla-comparativa-${safeFolio}.xlsx` : "tabla-comparativa.xlsx";
+  const responseBody = file.buffer.slice(
+    file.byteOffset,
+    file.byteOffset + file.byteLength,
+  ) as ArrayBuffer;
 
-  return new NextResponse(file, {
+  return new NextResponse(responseBody, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${filename}"`,
