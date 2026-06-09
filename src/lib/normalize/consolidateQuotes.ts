@@ -1,4 +1,3 @@
-import { buildComparisonScope } from "@/lib/normalize/buildComparisonScope";
 import {
   getExchangeRate,
   type ExchangeRateRequest,
@@ -11,6 +10,7 @@ import { parseMoney } from "@/lib/parser/parseMoney";
 import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 import type {
   AssociatedCost,
+  CascadeBlock,
   ComparisonItem,
   ConsolidatedComparison,
   Currency,
@@ -584,15 +584,9 @@ export async function consolidateQuotes(
 ): Promise<ConsolidatedComparison> {
   const outputCurrency = targetCurrency();
   const exchange = options.exchangeRate ?? (await getExchangeRate(exchangeRateRequest));
-  const mode = chooseComparisonMode(quotes);
-  const scope =
-    mode === "basket"
-      ? buildComparisonScope(quotes)
-      : { baseSupplierName: "Requerimiento global", baseItems: [], warnings: [] };
-  const warnings: string[] = [
-    ...scope.warnings,
-    ...quotes.flatMap((quote) => quote.warnings).filter((warning) => !isRawAssociatedCostWarning(warning))
-  ];
+  const warnings: string[] = quotes
+    .flatMap((quote) => quote.warnings)
+    .filter((warning) => !isRawAssociatedCostWarning(warning));
   if (quotes.length === 1) {
     warnings.push(
       formatWarning(
@@ -622,7 +616,6 @@ export async function consolidateQuotes(
       )
     );
   }
-  const usedBySupplier = new Map<string, Set<ExtractedQuoteItem>>();
   const requiresConversion = quotes.some((quote) =>
     quote.items.some((item) => isComparableProduct(item) && itemNeedsConversion(item, outputCurrency))
   );
@@ -632,108 +625,35 @@ export async function consolidateQuotes(
     warnings.push(...exchange.warnings.map((warning) => formatWarning("TIPO DE CAMBIO", warning)));
   }
 
-  for (const quote of quotes) {
-    usedBySupplier.set(quote.supplierName, new Set<ExtractedQuoteItem>());
-  }
+  const cascadeBlocks: CascadeBlock[] = quotes.map((quote) => {
+    const supplierIndex = suppliers.findIndex((supplier) => supplier.name === quote.supplierName);
 
-  const rows: WorkingRow[] =
-    mode === "global-requirement"
-      ? buildGlobalRequirementRows(quotes, outputCurrency, exchange.finalRate, warnings)
-      : [];
-
-  for (const baseItem of mode === "basket" ? scope.baseItems.filter(isComparableProduct) : []) {
-    const row: WorkingRow = {
-      seedItem: baseItem,
-      offers: {},
-      matchingWarnings: []
-    };
-
-    for (const quote of quotes) {
-      attachQuoteOfferToRow(
-        row,
-        quote,
-        usedBySupplier,
-        outputCurrency,
-        exchange.finalRate,
-        warnings,
-        conversionTracker
-      );
-    }
-
-    if (Object.keys(row.offers).length > 0) {
-      rows.push(row);
-    }
-  }
-
-  for (const quote of mode === "basket" ? quotes : []) {
-    const usedItems = usedBySupplier.get(quote.supplierName) ?? new Set<ExtractedQuoteItem>();
-
-    for (const item of quote.items) {
-      if (usedItems.has(item) || !isComparableProduct(item)) continue;
-
-      const attached = tryAttachUnmatchedItemToExistingRows(
-        rows,
-        quote.supplierName,
-        item,
-        outputCurrency,
-        exchange.finalRate,
-        warnings,
-        conversionTracker
-      );
-      if (attached) {
-        usedItems.add(item);
-        continue;
-      }
-
-      const independentRow: WorkingRow = {
-        seedItem: item,
-        offers: {
-          [quote.supplierName]: convertOfferToTarget(
-            quote.supplierName,
-            item,
-            outputCurrency,
-            item.quantity,
-            exchange.finalRate,
-            warnings,
-            conversionTracker
-          )
-        },
-        matchingWarnings: [
-          `${quote.supplierName}: producto agregado como fila independiente porque no tuvo equivalente seguro.`
-        ]
-      };
-      usedItems.add(item);
-
-      for (const otherQuote of quotes) {
-        if (otherQuote.supplierName === quote.supplierName) continue;
-        attachQuoteOfferToRow(
-          independentRow,
-          otherQuote,
-          usedBySupplier,
+    return {
+      supplierIndex,
+      supplierName: quote.supplierName,
+      items: comparableItems(quote).map((item, index) => {
+        const itemNumber = index + 1;
+        const quantity = comparisonQuantity(item.quantity, itemNumber, warnings);
+        const offer = convertOfferToTarget(
+          quote.supplierName,
+          item,
           outputCurrency,
+          quantity,
           exchange.finalRate,
           warnings,
           conversionTracker
         );
-      }
 
-      rows.push(independentRow);
-    }
-
-    usedBySupplier.set(quote.supplierName, usedItems);
-  }
-
-  const comparison: ComparisonItem[] = rows.map((row, index) => {
-    const itemNumber = index + 1;
-    const quantity = comparisonQuantity(row.seedItem.quantity, itemNumber, warnings);
-
-    return {
-      item: itemNumber,
-      product: displayProductName(row.seedItem.description),
-      quantity,
-      unit: row.seedItem.unit || "CU",
-      offers: row.offers,
-      matchingWarnings: row.matchingWarnings
+        return {
+          item: itemNumber,
+          product: item.description,
+          quantity,
+          unit: item.unit || "CU",
+          unitPrice: offer.unitPrice,
+          total: offer.total,
+          currency: offer.currency
+        };
+      })
     };
   });
 
@@ -752,8 +672,7 @@ export async function consolidateQuotes(
     const clpCount = comparableItems.filter((item) => item.currency === "CLP").length;
     const unknownCount = comparableItems.filter((item) => item.currency === "UNKNOWN").length;
     const convertedCount =
-      conversionTracker.convertedPerSupplier.get(quote.supplierName) ??
-      (mode === "global-requirement" && outputCurrency === "CLP" ? usdCount : 0);
+      conversionTracker.convertedPerSupplier.get(quote.supplierName) ?? 0;
 
     if (usdCount > 0 && clpCount > 0) {
       warnings.push(
@@ -789,8 +708,9 @@ export async function consolidateQuotes(
   }
 
   return {
-    comparison,
+    comparison: [],
     suppliers,
+    cascadeBlocks,
     warnings: [...new Set(warnings)],
     exchangeRate: {
       mode: exchange.mode,

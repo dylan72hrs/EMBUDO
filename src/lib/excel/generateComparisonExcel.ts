@@ -11,6 +11,26 @@ type GenerateResult = {
   warnings: string[];
 };
 
+type CascadeBlock = {
+  supplierIndex: number;
+  supplierName: string;
+  items: Array<{
+    item: number;
+    product: string;
+    quantity: number;
+    unit: string;
+    unitPrice: number | null;
+    total: number | null;
+    currency: Currency;
+  }>;
+};
+
+type CascadeWriteResult = {
+  footerRowOffset: number;
+  finalDataRow: number;
+  blocks: CascadeBlock[];
+};
+
 export type SupplierEvaluationInput = {
   supplierName: string;
   paymentCondition?: string;
@@ -132,7 +152,10 @@ function parseAssociatedCostsValue(value?: string) {
   return parsed;
 }
 
-function applyBlockBorders(worksheet: ExcelJS.Worksheet) {
+function applyBlockBorders(
+  worksheet: ExcelJS.Worksheet,
+  endRow: number = TEMPLATE_MAP.rows.associatedCosts
+) {
   const mediumSide: Partial<ExcelJS.Border> = { style: "medium", color: { argb: "FF000000" } };
 
   for (const [index, block] of TEMPLATE_MAP.supplierBlocks.entries()) {
@@ -148,7 +171,7 @@ function applyBlockBorders(worksheet: ExcelJS.Worksheet) {
       };
     }
 
-    for (let row = TEMPLATE_MAP.headerRows.supplierName; row <= TEMPLATE_MAP.rows.associatedCosts; row += 1) {
+    for (let row = TEMPLATE_MAP.headerRows.supplierName; row <= endRow; row += 1) {
       const leftCell = worksheet.getCell(row, block.unitPriceColumn);
       const rightCell = worksheet.getCell(row, block.totalColumn);
 
@@ -230,10 +253,160 @@ function resolvedOfferForRow(offer: SupplierOffer | undefined, quantity: number)
   return normalizeOfferForQuantity(offer, quantity);
 }
 
+function shiftedTemplateRow(row: number, footerRowOffset: number) {
+  return row + footerRowOffset;
+}
+
+function mergeRanges(worksheet: ExcelJS.Worksheet) {
+  return [
+    ...(((worksheet as unknown as { model: { merges?: string[] } }).model.merges ?? []) as string[])
+  ];
+}
+
+function shiftedMergeRange(range: string, insertAtRow: number, insertedRows: number) {
+  return range.replace(/(\$?[A-Z]+)(\$?)(\d+)/g, (cell, column: string, absolute: string, rowText: string) => {
+    const row = Number(rowText);
+    if (row < insertAtRow) return cell;
+    return `${column}${absolute}${row + insertedRows}`;
+  });
+}
+
+function copyProductRowStyle(
+  worksheet: ExcelJS.Worksheet,
+  sourceRowNumber: number,
+  targetRowNumber: number
+) {
+  const sourceRow = worksheet.getRow(sourceRowNumber);
+  const targetRow = worksheet.getRow(targetRowNumber);
+  targetRow.height = sourceRow.height;
+
+  const lastProductColumn =
+    TEMPLATE_MAP.supplierBlocks[TEMPLATE_MAP.supplierBlocks.length - 1].totalColumn;
+  for (let column = TEMPLATE_MAP.columns.item; column <= lastProductColumn; column += 1) {
+    const sourceCell = worksheet.getCell(sourceRowNumber, column);
+    const targetCell = worksheet.getCell(targetRowNumber, column);
+    targetCell.style = sourceCell.style;
+    cloneCellStyle(targetCell);
+    targetCell.value = null;
+  }
+}
+
+function insertStyledProductRows(worksheet: ExcelJS.Worksheet, rowCount: number) {
+  if (rowCount <= 0) return;
+
+  const insertAtRow = TEMPLATE_MAP.productEndRow + 1;
+  const rangesToShift = mergeRanges(worksheet).filter((range) => {
+    const firstCell = range.split(":")[0];
+    return Number(worksheet.getCell(firstCell).row) >= insertAtRow;
+  });
+
+  for (const range of rangesToShift) {
+    worksheet.unMergeCells(range);
+  }
+
+  worksheet.spliceRows(
+    insertAtRow,
+    0,
+    ...Array.from({ length: rowCount }, () => [] as ExcelJS.CellValue[])
+  );
+
+  for (let index = 0; index < rowCount; index += 1) {
+    copyProductRowStyle(worksheet, TEMPLATE_MAP.productEndRow, insertAtRow + index);
+  }
+
+  for (const range of rangesToShift) {
+    worksheet.mergeCells(shiftedMergeRange(range, insertAtRow, rowCount));
+  }
+}
+
+function cascadeLastItemRow(blocks: CascadeBlock[]) {
+  let rowNumber = TEMPLATE_MAP.productStartRow;
+  let lastItemRow = TEMPLATE_MAP.productStartRow - 1;
+
+  for (const [blockIndex, block] of blocks.entries()) {
+    for (const _item of block.items) {
+      lastItemRow = rowNumber;
+      rowNumber += 1;
+    }
+
+    if (blockIndex < blocks.length - 1) {
+      rowNumber += 3;
+    }
+  }
+
+  return lastItemRow;
+}
+
+function writeCascadeBlocks(
+  worksheet: ExcelJS.Worksheet,
+  cascadeBlocks: CascadeBlock[],
+  suppliers: ConsolidatedComparison["suppliers"],
+  options: { warnings: string[] }
+): CascadeWriteResult {
+  const blocks = cascadeBlocks.filter(
+    (block) =>
+      block.supplierIndex >= 0 &&
+      block.supplierIndex < suppliers.length &&
+      block.supplierIndex < TEMPLATE_MAP.supplierBlocks.length
+  );
+  const lastItemRow = cascadeLastItemRow(blocks);
+  const finalDataRow = Math.max(TEMPLATE_MAP.rows.total, lastItemRow + 3);
+  const footerRowOffset = finalDataRow - TEMPLATE_MAP.rows.total;
+
+  insertStyledProductRows(worksheet, footerRowOffset);
+
+  let rowNumber = TEMPLATE_MAP.productStartRow;
+  for (const [blockIndex, block] of blocks.entries()) {
+    const ownerBlock = TEMPLATE_MAP.supplierBlocks[block.supplierIndex];
+
+    for (const item of block.items) {
+      const row = worksheet.getRow(rowNumber);
+      writeDynamicCell(worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.item), item.item);
+
+      const productCell = worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.product);
+      writeDynamicCell(productCell, item.product);
+      productCell.alignment = { ...productCell.alignment, wrapText: true, vertical: "middle" };
+      row.height = productRowHeight(item.product) ?? row.height;
+
+      writeDynamicCell(worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.quantity), item.quantity);
+      writeDynamicCell(worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.unit), item.unit);
+
+      for (const supplierBlock of TEMPLATE_MAP.supplierBlocks) {
+        writeDynamicCell(worksheet.getCell(rowNumber, supplierBlock.unitPriceColumn), null);
+        writeDynamicCell(worksheet.getCell(rowNumber, supplierBlock.totalColumn), null);
+      }
+
+      const unitPriceCell = worksheet.getCell(rowNumber, ownerBlock.unitPriceColumn);
+      const totalCell = worksheet.getCell(rowNumber, ownerBlock.totalColumn);
+      writeDynamicCell(unitPriceCell, item.unitPrice);
+      writeDynamicCell(totalCell, item.total);
+      applyCurrencyFormat(unitPriceCell, item.currency);
+      applyCurrencyFormat(totalCell, item.currency);
+
+      if (item.currency === "UNKNOWN") {
+        options.warnings.push(`Moneda no determinada para ${item.product} - ${block.supplierName}`);
+      }
+
+      rowNumber += 1;
+    }
+
+    if (blockIndex < blocks.length - 1) {
+      rowNumber += 3;
+    }
+  }
+
+  return {
+    footerRowOffset,
+    finalDataRow,
+    blocks
+  };
+}
+
 function writePurchaseTotals(
   worksheet: ExcelJS.Worksheet,
   items: ComparisonItem[],
-  suppliers: ConsolidatedComparison["suppliers"]
+  suppliers: ConsolidatedComparison["suppliers"],
+  footerRowOffset = 0
 ) {
   for (const [supplierIndex, supplier] of suppliers.entries()) {
     const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
@@ -241,10 +414,44 @@ function writePurchaseTotals(
     const total = offers.reduce((sum, offer) => sum + (validPositive(offer?.total) ? offer.total : 0), 0);
     if (total <= 0) continue;
 
-    const unitSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.unitPriceColumn);
-    const totalSideCell = worksheet.getCell(TEMPLATE_MAP.rows.total, block.totalColumn);
+    const totalRow = shiftedTemplateRow(TEMPLATE_MAP.rows.total, footerRowOffset);
+    const unitSideCell = worksheet.getCell(totalRow, block.unitPriceColumn);
+    const totalSideCell = worksheet.getCell(totalRow, block.totalColumn);
     const currency = offerCurrency(offers);
 
+    writeDynamicCell(unitSideCell, total);
+    writeDynamicCell(totalSideCell, total);
+    applyCurrencyFormat(unitSideCell, currency);
+    applyCurrencyFormat(totalSideCell, currency);
+  }
+}
+
+function writeCascadePurchaseTotals(
+  worksheet: ExcelJS.Worksheet,
+  blocks: CascadeBlock[],
+  footerRowOffset: number
+) {
+  const totalRow = shiftedTemplateRow(TEMPLATE_MAP.rows.total, footerRowOffset);
+  const totalsBySupplier = new Map<number, number>();
+  const currencyBySupplier = new Map<number, Currency>();
+
+  for (const block of blocks) {
+    const total = block.items.reduce(
+      (sum, item) => sum + (validPositive(item.total) ? item.total : 0),
+      0
+    );
+    totalsBySupplier.set(block.supplierIndex, (totalsBySupplier.get(block.supplierIndex) ?? 0) + total);
+    const currency = block.items.find((item) => item.currency !== "UNKNOWN")?.currency;
+    if (currency) currencyBySupplier.set(block.supplierIndex, currency);
+  }
+
+  for (const [supplierIndex, total] of totalsBySupplier.entries()) {
+    if (total <= 0) continue;
+
+    const supplierBlock = TEMPLATE_MAP.supplierBlocks[supplierIndex];
+    const unitSideCell = worksheet.getCell(totalRow, supplierBlock.unitPriceColumn);
+    const totalSideCell = worksheet.getCell(totalRow, supplierBlock.totalColumn);
+    const currency = currencyBySupplier.get(supplierIndex) ?? "CLP";
     writeDynamicCell(unitSideCell, total);
     writeDynamicCell(totalSideCell, total);
     applyCurrencyFormat(unitSideCell, currency);
@@ -296,13 +503,18 @@ function compactAssociatedData(supplierEvaluation?: SupplierEvaluationInput) {
 function writeAdditionalEvaluationData(
   worksheet: ExcelJS.Worksheet,
   suppliersToWrite: ConsolidatedComparison["suppliers"],
-  additionalEvaluation: AdditionalEvaluationData | undefined
+  additionalEvaluation: AdditionalEvaluationData | undefined,
+  footerRowOffset = 0
 ) {
   if (!additionalEvaluation) return;
 
   const supplierEvaluations = additionalEvaluation.supplierEvaluations ?? [];
   const urgency = hasText(additionalEvaluation.urgency) ? additionalEvaluation.urgency?.trim() : undefined;
-  const associatedCostsRow = findRowByLabel(worksheet, "COSTOS ASOCIADOS", TEMPLATE_MAP.rows.associatedCosts);
+  const associatedCostsRow = findRowByLabel(
+    worksheet,
+    "COSTOS ASOCIADOS",
+    shiftedTemplateRow(TEMPLATE_MAP.rows.associatedCosts, footerRowOffset)
+  );
 
   for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
     const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
@@ -311,27 +523,36 @@ function writeAdditionalEvaluationData(
 
     if (hasText(supplierEvaluation?.creditStatus)) {
       writeIfNotFormula(
-        worksheet.getCell(TEMPLATE_MAP.rows.credit, block.unitPriceColumn),
+        worksheet.getCell(shiftedTemplateRow(TEMPLATE_MAP.rows.credit, footerRowOffset), block.unitPriceColumn),
         supplierEvaluation?.creditStatus?.trim() ?? null
       );
     }
 
     if (hasText(supplierEvaluation?.paymentCondition)) {
       writeIfNotFormula(
-        worksheet.getCell(TEMPLATE_MAP.rows.paymentCondition, block.unitPriceColumn),
+        worksheet.getCell(
+          shiftedTemplateRow(TEMPLATE_MAP.rows.paymentCondition, footerRowOffset),
+          block.unitPriceColumn
+        ),
         supplierEvaluation?.paymentCondition?.trim() ?? null
       );
     }
 
     if (hasText(supplierEvaluation?.deliveryTime)) {
       writeIfNotFormula(
-        worksheet.getCell(TEMPLATE_MAP.rows.deliveryTime, block.unitPriceColumn),
+        worksheet.getCell(
+          shiftedTemplateRow(TEMPLATE_MAP.rows.deliveryTime, footerRowOffset),
+          block.unitPriceColumn
+        ),
         supplierEvaluation?.deliveryTime?.trim() ?? null
       );
     }
 
     if (urgency) {
-      writeIfNotFormula(worksheet.getCell(TEMPLATE_MAP.rows.urgency, block.unitPriceColumn), urgency);
+      writeIfNotFormula(
+        worksheet.getCell(shiftedTemplateRow(TEMPLATE_MAP.rows.urgency, footerRowOffset), block.unitPriceColumn),
+        urgency
+      );
     }
 
     if (associatedText) {
@@ -340,7 +561,10 @@ function writeAdditionalEvaluationData(
   }
 
   if (hasText(additionalEvaluation.awardCriteria)) {
-    const criteriaCell = worksheet.getCell(TEMPLATE_MAP.rows.awardCriteria, 3);
+    const criteriaCell = worksheet.getCell(
+      shiftedTemplateRow(TEMPLATE_MAP.rows.awardCriteria, footerRowOffset),
+      3
+    );
     const criteriaParts = [additionalEvaluation.awardCriteria?.trim()];
     if (typeof additionalEvaluation.budgetObjective === "number" && Number.isFinite(additionalEvaluation.budgetObjective)) {
       const formattedBudget = new Intl.NumberFormat("es-CL", {
@@ -358,14 +582,14 @@ function writeAdditionalEvaluationData(
 
   if (hasText(additionalEvaluation.awardResponsible)) {
     writeDynamicCell(
-      worksheet.getCell(TEMPLATE_MAP.rows.awardResponsible, 3),
+      worksheet.getCell(shiftedTemplateRow(TEMPLATE_MAP.rows.awardResponsible, footerRowOffset), 3),
       additionalEvaluation.awardResponsible?.trim() ?? null
     );
   }
 
   if (hasText(additionalEvaluation.buyerResponsible)) {
     writeDynamicCell(
-      worksheet.getCell(TEMPLATE_MAP.rows.buyerResponsible, 3),
+      worksheet.getCell(shiftedTemplateRow(TEMPLATE_MAP.rows.buyerResponsible, footerRowOffset), 3),
       additionalEvaluation.buyerResponsible?.trim() ?? null
     );
   }
@@ -388,10 +612,13 @@ export async function generateComparisonExcel(
   const warnings: string[] = [...data.warnings];
   const maxItems = TEMPLATE_MAP.productEndRow - TEMPLATE_MAP.productStartRow + 1;
   const maxSuppliers = TEMPLATE_MAP.supplierBlocks.length;
-  const itemsToWrite = normalizeComparisonItems(data.comparison.slice(0, maxItems));
+  const hasCascadeBlocks = Boolean(data.cascadeBlocks && data.cascadeBlocks.length > 0);
+  const itemsToWrite = hasCascadeBlocks
+    ? []
+    : normalizeComparisonItems(data.comparison.slice(0, maxItems));
   const suppliersToWrite = data.suppliers.slice(0, maxSuppliers);
 
-  if (data.comparison.length > maxItems) {
+  if (!hasCascadeBlocks && data.comparison.length > maxItems) {
     warnings.push(
       `La plantilla permite ${maxItems} productos; ${data.comparison.length - maxItems} productos no fueron escritos.`
     );
@@ -403,8 +630,21 @@ export async function generateComparisonExcel(
   }
 
   clearTemplateDynamicFields(worksheet);
-  applyBlockBorders(worksheet);
-  const associatedCostsRow = findRowByLabel(worksheet, "COSTOS ASOCIADOS", TEMPLATE_MAP.rows.associatedCosts);
+  const cascadeResult =
+    hasCascadeBlocks && data.cascadeBlocks
+      ? writeCascadeBlocks(worksheet, data.cascadeBlocks, suppliersToWrite, { warnings })
+      : undefined;
+  const footerRowOffset = cascadeResult?.footerRowOffset ?? 0;
+  const associatedCostsFallbackRow = shiftedTemplateRow(
+    TEMPLATE_MAP.rows.associatedCosts,
+    footerRowOffset
+  );
+  applyBlockBorders(worksheet, associatedCostsFallbackRow);
+  const associatedCostsRow = findRowByLabel(
+    worksheet,
+    "COSTOS ASOCIADOS",
+    associatedCostsFallbackRow
+  );
 
   if (hasText(options.folio)) {
     writeFolioCell(worksheet, options.folio as string);
@@ -413,13 +653,22 @@ export async function generateComparisonExcel(
   for (const [index, supplier] of suppliersToWrite.entries()) {
     const block = TEMPLATE_MAP.supplierBlocks[index];
     worksheet.getCell(block.supplierNameCell).value = supplier.name;
-    writeIfNotFormula(worksheet.getCell(TEMPLATE_MAP.rows.credit, block.unitPriceColumn), supplier.credit ?? null);
     writeIfNotFormula(
-      worksheet.getCell(TEMPLATE_MAP.rows.paymentCondition, block.unitPriceColumn),
+      worksheet.getCell(shiftedTemplateRow(TEMPLATE_MAP.rows.credit, footerRowOffset), block.unitPriceColumn),
+      supplier.credit ?? null
+    );
+    writeIfNotFormula(
+      worksheet.getCell(
+        shiftedTemplateRow(TEMPLATE_MAP.rows.paymentCondition, footerRowOffset),
+        block.unitPriceColumn
+      ),
       supplier.paymentCondition ?? null
     );
     writeIfNotFormula(
-      worksheet.getCell(TEMPLATE_MAP.rows.deliveryTime, block.unitPriceColumn),
+      worksheet.getCell(
+        shiftedTemplateRow(TEMPLATE_MAP.rows.deliveryTime, footerRowOffset),
+        block.unitPriceColumn
+      ),
       supplier.deliveryTime ?? null
     );
     writeDynamicCell(
@@ -432,54 +681,74 @@ export async function generateComparisonExcel(
     }
   }
 
-  for (const [index, item] of itemsToWrite.entries()) {
-    const rowNumber = TEMPLATE_MAP.productStartRow + index;
-    const row = worksheet.getRow(rowNumber);
-    worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.item).value = item.item;
-    const productCell = worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.product);
-    productCell.value = item.product;
-    cloneCellStyle(productCell);
-    productCell.alignment = { ...productCell.alignment, wrapText: true, vertical: "middle" };
-    row.height = productRowHeight(item.product) ?? row.height;
-    worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.quantity).value = item.quantity;
-    worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.unit).value = item.unit || "CU";
+  if (!hasCascadeBlocks) {
+    for (const [index, item] of itemsToWrite.entries()) {
+      const rowNumber = TEMPLATE_MAP.productStartRow + index;
+      const row = worksheet.getRow(rowNumber);
+      worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.item).value = item.item;
+      const productCell = worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.product);
+      productCell.value = item.product;
+      cloneCellStyle(productCell);
+      productCell.alignment = { ...productCell.alignment, wrapText: true, vertical: "middle" };
+      row.height = productRowHeight(item.product) ?? row.height;
+      worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.quantity).value = item.quantity;
+      worksheet.getCell(rowNumber, TEMPLATE_MAP.columns.unit).value = item.unit || "CU";
 
-    for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
-      const offer = resolvedOfferForRow(item.offers[supplier.name], item.quantity);
-      const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
-      const unitPriceCell = worksheet.getCell(rowNumber, block.unitPriceColumn);
-      const totalCell = worksheet.getCell(rowNumber, block.totalColumn);
+      for (const [supplierIndex, supplier] of suppliersToWrite.entries()) {
+        const offer = resolvedOfferForRow(item.offers[supplier.name], item.quantity);
+        const block = TEMPLATE_MAP.supplierBlocks[supplierIndex];
+        const unitPriceCell = worksheet.getCell(rowNumber, block.unitPriceColumn);
+        const totalCell = worksheet.getCell(rowNumber, block.totalColumn);
 
-      writeDynamicCell(unitPriceCell, offer?.unitPrice ?? null);
-      writeDynamicCell(totalCell, offer?.total ?? null);
+        writeDynamicCell(unitPriceCell, offer?.unitPrice ?? null);
+        writeDynamicCell(totalCell, offer?.total ?? null);
 
-      if (offer) {
-        applyCurrencyFormat(unitPriceCell, offer.currency);
-        applyCurrencyFormat(totalCell, offer.currency);
+        if (offer) {
+          applyCurrencyFormat(unitPriceCell, offer.currency);
+          applyCurrencyFormat(totalCell, offer.currency);
 
-        if (offer.currency === "UNKNOWN") {
-          warnings.push(`Moneda no determinada para ${item.product} - ${supplier.name}`);
+          if (offer.currency === "UNKNOWN") {
+            warnings.push(`Moneda no determinada para ${item.product} - ${supplier.name}`);
+          }
         }
       }
     }
   }
 
-  writeAdditionalEvaluationData(worksheet, suppliersToWrite, options.additionalEvaluation);
+  writeAdditionalEvaluationData(
+    worksheet,
+    suppliersToWrite,
+    options.additionalEvaluation,
+    footerRowOffset
+  );
 
   for (const supplier of suppliersToWrite) {
-    const currencies = new Set(
-      itemsToWrite
-        .map((item) => item.offers[supplier.name]?.currency)
-        .filter((currency): currency is Currency => Boolean(currency) && currency !== "UNKNOWN")
-    );
+    const supplierIndex = suppliersToWrite.indexOf(supplier);
+    const currencies = hasCascadeBlocks
+      ? new Set(
+          (cascadeResult?.blocks ?? [])
+            .filter((block) => block.supplierIndex === supplierIndex)
+            .flatMap((block) => block.items)
+            .map((item) => item.currency)
+            .filter((currency): currency is Currency => currency !== "UNKNOWN")
+        )
+      : new Set(
+          itemsToWrite
+            .map((item) => item.offers[supplier.name]?.currency)
+            .filter((currency): currency is Currency => Boolean(currency) && currency !== "UNKNOWN")
+        );
 
     if (currencies.size > 1) {
       warnings.push(`Proveedor ${supplier.name} tiene monedas mixtas; total requiere revision.`);
     }
   }
 
-  writePurchaseTotals(worksheet, itemsToWrite, suppliersToWrite);
-  highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
+  if (cascadeResult) {
+    writeCascadePurchaseTotals(worksheet, cascadeResult.blocks, footerRowOffset);
+  } else {
+    writePurchaseTotals(worksheet, itemsToWrite, suppliersToWrite);
+    highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
+  }
 
   workbook.calcProperties.fullCalcOnLoad = true;
 

@@ -96,6 +96,22 @@ export const ComparisonItemSchema = z.object({
   matchingWarnings: z.array(z.string()).default([])
 });
 
+export const CascadeBlockSchema = z.object({
+  supplierIndex: z.number().int().nonnegative(),
+  supplierName: z.string(),
+  items: z.array(
+    z.object({
+      item: z.number().int().positive(),
+      product: z.string(),
+      quantity: z.number(),
+      unit: z.string(),
+      unitPrice: z.number().nonnegative().nullable(),
+      total: z.number().nonnegative().nullable(),
+      currency: CurrencySchema
+    })
+  )
+});
+
 export const AppliedExchangeRateSchema = z.object({
   mode: z.enum(["auto", "manual", "fallback", "env"]),
   baseRate: z.number().positive(),
@@ -106,6 +122,7 @@ export const AppliedExchangeRateSchema = z.object({
 export const ConsolidatedComparisonSchema = z.object({
   comparison: z.array(ComparisonItemSchema),
   suppliers: z.array(SupplierSummarySchema),
+  cascadeBlocks: z.array(CascadeBlockSchema).optional(),
   warnings: z.array(z.string()).default([]),
   exchangeRate: AppliedExchangeRateSchema.optional()
 });
@@ -117,5 +134,6 @@ export type ParsedQuote = z.infer<typeof ParsedQuoteSchema>;
 export type SupplierSummary = z.infer<typeof SupplierSummarySchema>;
 export type SupplierOffer = z.infer<typeof SupplierOfferSchema>;
 export type ComparisonItem = z.infer<typeof ComparisonItemSchema>;
+export type CascadeBlock = z.infer<typeof CascadeBlockSchema>;
 export type ConsolidatedComparison = z.infer<typeof ConsolidatedComparisonSchema>;
 export type AppliedExchangeRate = z.infer<typeof AppliedExchangeRateSchema>;
