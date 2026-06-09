@@ -802,7 +802,10 @@ export async function POST(request: Request) {
       ok: true,
       status: "completed",
       suppliers: consolidated.suppliers.map((supplier) => supplier.name),
-      itemsDetected: consolidated.comparison.length,
+      itemsDetected:
+        consolidated.cascadeBlocks && consolidated.cascadeBlocks.length > 0
+          ? consolidated.cascadeBlocks.reduce((sum, block) => sum + block.items.length, 0)
+          : consolidated.comparison.length,
       warnings: allWarnings,
       downloadUrl: `/api/download/${activeJobId}`,
       analytics,

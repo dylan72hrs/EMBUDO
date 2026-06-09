@@ -1,0 +1,267 @@
+{
+  "name": "EMBUDO v2 - PDF Extractor Parser Robusto Final",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "embudo-extract-quotes",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {
+          "allowedOrigins": "https://embudo.onrender.com"
+        }
+      },
+      "id": "webhook-final-stable-001",
+      "name": "Webhook POST /embudo-extract-quotes",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -700,
+        100
+      ],
+      "webhookId": "7441936f-1a7e-4563-b3db-6e22f974fd7c",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "s0G4Nd3EswbXx5O6",
+          "name": "Header Auth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first();\nconst body = input.json.body || input.json || {};\nconst binary = input.binary || {};\nconst binaryKeys = Object.keys(binary);\n\nfunction parseJsonMaybe(value, fallback) {\n  if (value === undefined || value === null || value === \"\") return fallback;\n  if (typeof value === \"object\") return value;\n  if (typeof value === \"string\") {\n    try {\n      return JSON.parse(value);\n    } catch (_) {\n      return fallback;\n    }\n  }\n  return fallback;\n}\n\nfunction toNumber(value, fallback = null) {\n  if (value === undefined || value === null || value === \"\") return fallback;\n  if (typeof value === \"number\") return Number.isFinite(value) ? value : fallback;\n\n  let s = String(value)\n    .replace(/US\\$/gi, \"\")\n    .replace(/\\$/g, \"\")\n    .replace(/CLP|USD|EUR/gi, \"\")\n    .replace(/[()]/g, \"\")\n    .replace(/\\s/g, \"\")\n    .replace(/[^\\d.,-]/g, \"\")\n    .trim();\n\n  if (!s) return fallback;\n\n  const hasComma = s.includes(\",\");\n  const hasDot = s.includes(\".\");\n\n  if (hasComma && hasDot) {\n    s = s.lastIndexOf(\",\") > s.lastIndexOf(\".\")\n      ? s.replace(/\\./g, \"\").replace(\",\", \".\")\n      : s.replace(/,/g, \"\");\n  } else if (hasComma && !hasDot) {\n    const parts = s.split(\",\");\n    s = parts.length === 2 && parts[1].length <= 2\n      ? parts[0].replace(/\\./g, \"\") + \".\" + parts[1]\n      : s.replace(/,/g, \"\");\n  } else if (hasDot && !hasComma) {\n    const parts = s.split(\".\");\n    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) {\n      s = s.replace(/\\./g, \"\");\n    }\n  }\n\n  const n = Number(s);\n  return Number.isFinite(n) ? n : fallback;\n}\n\nfunction parseSizeBytes(value) {\n  if (value === undefined || value === null || value === \"\") return 0;\n  if (typeof value === \"number\") return value;\n\n  const raw = String(value).trim().toLowerCase();\n  const n = Number(raw.replace(\",\", \".\").replace(/[^\\d.]/g, \"\"));\n\n  if (!Number.isFinite(n)) return 0;\n\n  if (raw.includes(\"gb\")) return Math.round(n * 1024 * 1024 * 1024);\n  if (raw.includes(\"mb\")) return Math.round(n * 1024 * 1024);\n  if (raw.includes(\"kb\")) return Math.round(n * 1024);\n\n  return Math.round(n);\n}\n\nfunction extOf(fileName) {\n  return String(fileName || \"\").split(\".\").pop().toLowerCase();\n}\n\nconst evaluationRaw = parseJsonMaybe(body.evaluationDataJson || body.evaluationData, {});\nconst providerVariables = parseJsonMaybe(\n  body.providerVariablesJson || body.providerVariables || evaluationRaw.providerVariables,\n  []\n);\n\nconst exchange = {\n  mode: String(body.exchangeRateMode || body.exchangeMode || \"auto\"),\n  baseRate: toNumber(body.exchangeRateBase || body.baseRate, null),\n  marginClp: toNumber(body.exchangeRateMarginClp ?? body.marginClp, 0),\n  manualRate: toNumber(body.exchangeRateManual || body.manualRate, null),\n  finalRate: toNumber(body.exchangeRateFinal || body.finalRate, null),\n  targetCurrency: String(body.targetCurrency || \"CLP\").toUpperCase()\n};\n\nconst evaluationData = {\n  ...evaluationRaw,\n  responsableAdjudicacion:\n    body.responsableAdjudicacion ||\n    body.awardingResponsible ||\n    evaluationRaw.responsableAdjudicacion ||\n    null,\n  compradorResponsable:\n    body.compradorResponsable ||\n    body.buyerResponsible ||\n    evaluationRaw.compradorResponsable ||\n    null,\n  gradoUrgencia:\n    body.gradoUrgencia ||\n    body.urgencyLevel ||\n    evaluationRaw.gradoUrgencia ||\n    null,\n  presupuestoObjetivo: toNumber(\n    body.presupuestoObjetivo || body.targetBudget || evaluationRaw.presupuestoObjetivo,\n    null\n  ),\n  criterioAdjudicacion:\n    body.criterioAdjudicacion ||\n    body.adjudicationCriteria ||\n    evaluationRaw.criterioAdjudicacion ||\n    null,\n  providerVariables: Array.isArray(providerVariables) ? providerVariables : []\n};\n\nconst requestContext = {\n  jobId: String(body.jobId || body.sessionId || `EMBUDO-${Date.now()}`),\n  exchange,\n  evaluationData\n};\n\nconst maxBytes = 15 * 1024 * 1024;\nconst output = [];\nconst omittedFiles = [];\nconst warnings = [];\n\nif (binaryKeys.length === 0) {\n  return [\n    {\n      json: {\n        noValidPdf: true,\n        ok: false,\n        statusCode: 400,\n        ...requestContext,\n        summary: {\n          filesReceived: 0,\n          filesAccepted: 0,\n          omittedFiles: 0\n        },\n        documents: [],\n        validDocuments: [],\n        validQuotations: [],\n        omittedFiles: [],\n        warnings: [],\n        errors: [\"No se recibieron archivos.\"]\n      }\n    }\n  ];\n}\n\nfor (let index = 0; index < binaryKeys.length; index++) {\n  const key = binaryKeys[index];\n  const file = binary[key];\n\n  const fileName = file.fileName || file.filename || `archivo_${index + 1}.pdf`;\n  const ext = extOf(fileName);\n  const mimeType = file.mimeType || file.type || \"\";\n  const fileSize = parseSizeBytes(file.fileSize || file.fileSizeBytes || 0);\n\n  const isPdfExt = ext === \"pdf\";\n  const isPdfMime = !mimeType || String(mimeType).toLowerCase().includes(\"pdf\");\n\n  if (!isPdfExt || !isPdfMime) {\n    omittedFiles.push({\n      fileName,\n      fileKind: \"unsupported\",\n      ext,\n      mimeType: mimeType || \"application/octet-stream\",\n      reason: \"unsupported_file\",\n      warnings: [\"Solo se aceptan archivos PDF en esta versión.\"]\n    });\n    warnings.push(`${fileName}: archivo omitido porque no es PDF.`);\n    continue;\n  }\n\n  if (fileSize > maxBytes) {\n    omittedFiles.push({\n      fileName,\n      fileKind: \"pdf\",\n      ext,\n      mimeType: \"application/pdf\",\n      fileSize,\n      reason: \"too_large\",\n      warnings: [\"El archivo supera el máximo permitido de 15 MB.\"]\n    });\n    warnings.push(`${fileName}: archivo omitido porque supera 15 MB.`);\n    continue;\n  }\n\n  output.push({\n    json: {\n      noValidPdf: false,\n      ok: true,\n      fileIndex: output.length,\n      fileName,\n      fileKind: \"pdf\",\n      ext: \"pdf\",\n      mimeType: \"application/pdf\",\n      fileSize,\n      originalBinaryKey: key,\n      omittedFiles: [...omittedFiles],\n      warnings: [...warnings],\n      errors: [],\n      ...requestContext\n    },\n    binary: {\n      data: {\n        ...file,\n        fileName,\n        filename: fileName,\n        mimeType: \"application/pdf\"\n      }\n    }\n  });\n}\n\nif (output.length === 0) {\n  return [\n    {\n      json: {\n        noValidPdf: true,\n        ok: false,\n        statusCode: 400,\n        ...requestContext,\n        summary: {\n          filesReceived: binaryKeys.length,\n          filesAccepted: 0,\n          omittedFiles: omittedFiles.length\n        },\n        documents: [],\n        validDocuments: [],\n        validQuotations: [],\n        omittedFiles,\n        warnings,\n        errors: [\"No se recibió ningún PDF válido.\"]\n      }\n    }\n  ];\n}\n\nreturn output;"
+      },
+      "id": "validate-final-stable-001",
+      "name": "Validate PDF Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "20b06b90-e32e-4207-a701-f015749e20ba",
+              "leftValue": "={{ $json.noValidPdf !== true }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-final-stable-001",
+      "name": "IF Is Valid PDF?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        -250,
+        100
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return[{json:{ok:false,source:'n8n-embudo-pdf-v1',jobId:$json.jobId||null,exchange:$json.exchange||{},evaluationData:$json.evaluationData||{},summary:{jobId:$json.jobId||null,filesProcessed:0,documentsDetected:0,validQuotations:0,omittedFiles:($json.omittedFiles||[]).length,totalItems:0,suppliersDetected:[],warnings:($json.warnings||[]).length,errors:($json.errors||[]).length||1},documents:[],validDocuments:[],validQuotations:[],omittedFiles:$json.omittedFiles||[],warnings:$json.warnings||[],errors:$json.errors||['No se recibió ningún PDF válido.']}}];"
+      },
+      "id": "no-valid-final-stable-001",
+      "name": "Build No Valid PDF Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        310
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "id": "extract-final-stable-001",
+      "name": "Extract from File",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -30
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const src=$('Validate PDF Request').all();const clean=v=>String(v??'').replace(/\\r\\n/g,'\\n').replace(/\\r/g,'\\n').replace(/\\u0000/g,'').replace(/[ \\t]+/g,' ').replace(/\\n[ \\t]+/g,'\\n').replace(/\\n{3,}/g,'\\n\\n').trim();const pick=j=>typeof j.text==='string'?j.text:typeof j.extractedText==='string'?j.extractedText:typeof j.data==='string'?j.data:JSON.stringify(j,null,2);return $input.all().map((it,i)=>{const s=src[i]?.json||{},e=it.json||{},raw=clean(pick(e)),w=[...(s.warnings||[])];if(raw.length<80)w.push(`${s.fileName||'archivo.pdf'}: texto insuficiente, puede requerir OCR.`);return{json:{...s,extractedTextLength:raw.length,textForAI:raw.slice(0,120000),rawTextPreview:raw.slice(0,6000),extractionMetadata:{info:e.info||{},metadata:e.metadata||{},numpages:e.numpages||null,numrender:e.numrender||null,version:e.version||null},warnings:w}}});"
+      },
+      "id": "prepare-final-stable-001",
+      "name": "Prepare PDF Text For AI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        170,
+        -30
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "/* ============================================================================\n * EMBUDO v2 - Build Deterministic Final Response\n * Parser deterministico GENERICO basado en el invariante  qty * unit ~= total.\n *\n * pdf-parse destruye el layout de las tablas y concatena columnas sin separador\n * (ej. \"1K75404Kensington Mouse...33,0033,00\"). Este parser:\n *   - reconstruye filas tokenizando numeros (separando decimales pegados),\n *   - acepta una fila SOLO si cantidad * precioUnit ~= total  -> elimina la\n *     basura (fechas, RUT, telefonos, cuentas, P/N no cumplen el invariante),\n *   - detecta proveedor por RUT conocido / \"Emitir OC\" / NOMBRE / dominio,\n *   - nunca usa al cliente (Master Drilling) como proveedor,\n *   - convierte USD->CLP con exchange.finalRate,\n *   - calcula subtotal = suma(items + costos), IVA 19%, total.\n *\n * NO hardcodea productos ni precios: funciona con cotizaciones nuevas de los\n * mismos proveedores y con otros proveedores en formatos distintos.\n *\n * Contrato de salida intacto: ok, source, jobId, exchange, evaluationData,\n * summary, documents, validDocuments, validQuotations, omittedFiles,\n * warnings, errors.  Cada PDF -> exactamente un document.\n * ==========================================================================*/\n\nconst sourceItems = $input.all();\n\n/* --------------------------------- utils -------------------------------- */\nfunction asText(v) { return v === null || v === undefined ? \"\" : String(v); }\nfunction compact(v) { return asText(v).replace(/\\s+/g, \" \").trim(); }\nfunction norm(v) {\n  return asText(v).replace(/\\r\\n/g, \"\\n\").replace(/\\r/g, \"\\n\")\n    .replace(/\u0000/g, \"\").replace(/[ \\t]+/g, \" \").replace(/\\n[ \\t]+/g, \"\\n\")\n    .replace(/\\n{3,}/g, \"\\n\\n\").trim();\n}\nfunction stripAcc(v) { return asText(v).normalize(\"NFD\").replace(/[̀-ͯ]/g, \"\"); }\nfunction normSearch(v) { return stripAcc(asText(v)).toLowerCase().replace(/\\s+/g, \" \").trim(); }\n\nfunction toNum(value, fallback) {\n  if (fallback === undefined) fallback = null;\n  if (value === null || value === undefined || value === \"\") return fallback;\n  if (typeof value === \"number\") return Number.isFinite(value) ? value : fallback;\n  let s = String(value)\n    .replace(/US\\$/gi, \"\").replace(/\\$/g, \"\").replace(/CLP|USD|EUR/gi, \"\")\n    .replace(/[()]/g, \"\").replace(/\\s/g, \"\").replace(/\\.-$/g, \"\").replace(/-$/g, \"\")\n    .replace(/[^\\d.,-]/g, \"\").trim();\n  if (!s || s === \"-\" || s === \".\" || s === \",\") return fallback;\n  const hasComma = s.includes(\",\"), hasDot = s.includes(\".\");\n  if (hasComma && hasDot) {\n    s = s.lastIndexOf(\",\") > s.lastIndexOf(\".\")\n      ? s.replace(/\\./g, \"\").replace(\",\", \".\")\n      : s.replace(/,/g, \"\");\n  } else if (hasComma && !hasDot) {\n    const parts = s.split(\",\");\n    s = parts.length === 2 && parts[1].length <= 2\n      ? parts[0].replace(/\\./g, \"\") + \".\" + parts[1]\n      : s.replace(/,/g, \"\");\n  } else if (hasDot && !hasComma) {\n    const parts = s.split(\".\");\n    if (parts.length > 2 || (parts.length === 2 && parts[1].length === 3)) s = s.replace(/\\./g, \"\");\n  }\n  const n = Number(s);\n  return Number.isFinite(n) ? n : fallback;\n}\n\nfunction normCur(v, fallback) {\n  if (fallback === undefined) fallback = \"UNKNOWN\";\n  const c = asText(v || fallback).toUpperCase();\n  if ([\"CLP\", \"USD\", \"EUR\", \"UNKNOWN\"].includes(c)) return c;\n  if (/USD|US\\$|DOLAR|DÓLAR|DOLARES/i.test(c)) return \"USD\";\n  if (/CLP|PESO/i.test(c)) return \"CLP\";\n  if (/EUR|EURO/i.test(c)) return \"EUR\";\n  return fallback;\n}\nfunction getRate(exchange) { return toNum(exchange && (exchange.finalRate || exchange.manualRate || exchange.baseRate), null); }\nfunction convertMoney(amount, currency, exchange) {\n  const v = toNum(amount, null), curr = normCur(currency), rate = getRate(exchange);\n  if (v === null) return { clp: null, converted: false };\n  if (curr === \"CLP\") return { clp: v, converted: false };\n  if ((curr === \"USD\" || curr === \"EUR\") && rate && rate > 0) return { clp: Math.round(v * rate), converted: true };\n  return { clp: null, converted: false };\n}\n\nfunction firstMatch(text, regex, group) {\n  if (group === undefined) group = 1;\n  const m = text.match(regex);\n  return m ? compact(m[group]) : null;\n}\nfunction allRut(text) {\n  // Requiere guion para evitar falsos positivos (ej. \"583942026\").\n  const matches = text.match(/\\b\\d{1,2}\\.\\d{3}\\.\\d{3}-[\\dkK]\\b|\\b\\d{7,8}-[\\dkK]\\b/g) || [];\n  return [...new Set(matches.map(r => compact(r)))];\n}\nfunction normRut(r) { return stripAcc(asText(r)).toLowerCase().replace(/[^0-9k]/g, \"\"); }\n\nfunction monthNum(name) {\n  const n = normSearch(name);\n  const map = { enero: \"01\", ene: \"01\", febrero: \"02\", february: \"02\", feb: \"02\", marzo: \"03\", march: \"03\", mar: \"03\",\n    abril: \"04\", april: \"04\", abr: \"04\", mayo: \"05\", may: \"05\", junio: \"06\", june: \"06\", jun: \"06\",\n    julio: \"07\", july: \"07\", jul: \"07\", agosto: \"08\", august: \"08\", ago: \"08\", septiembre: \"09\", setiembre: \"09\", sep: \"09\",\n    octubre: \"10\", october: \"10\", oct: \"10\", noviembre: \"11\", november: \"11\", nov: \"11\", diciembre: \"12\", december: \"12\", dic: \"12\" };\n  return map[n] || null;\n}\nfunction extractDate(text) {\n  let m = text.match(/\\b(\\d{1,2})[\\/\\-](\\d{1,2})[\\/\\-](\\d{2,4})\\b/);\n  if (m) { const yyyy = m[3].length === 2 ? \"20\" + m[3] : m[3]; return yyyy + \"-\" + m[2].padStart(2, \"0\") + \"-\" + m[1].padStart(2, \"0\"); }\n  m = text.match(/\\b(\\d{1,2})\\s+de\\s+([A-Za-zÀ-ɏ]+)\\s+(?:del?\\s+)?(\\d{4})\\b/i);\n  if (m) { const mm = monthNum(m[2]); if (mm) return m[3] + \"-\" + mm + \"-\" + m[1].padStart(2, \"0\"); }\n  m = text.match(/\\b(\\d{1,2})\\s+([A-Za-zÀ-ɏ]+)\\s+(\\d{4})\\b/);\n  if (m) { const mm = monthNum(m[2]); if (mm) return m[3] + \"-\" + mm + \"-\" + m[1].padStart(2, \"0\"); }\n  return null;\n}\nfunction extractDocNumber(text) {\n  return firstMatch(text,\n    /(?:cotizaci[oó]n\\s*(?:n[°ºo.]*)?|n[°º]\\s*(?:de\\s+cotizaci[oó]n)?|presupuesto\\s*n[°º.]?|nro\\s*:?|folio\\s*n[°º.]?)\\s*[:\\-#]?\\s*([A-Z0-9][A-Z0-9.\\/_\\-]{2,})/i\n  );\n}\nfunction detectDocCurrency(text) {\n  if (/TOTAL\\s*\\(\\s*D[oó]lar\\s*\\)|D[oó]lar\\s+Observado|Tipo\\s+Cambio[\\s\\S]{0,80}D[oó]lar/i.test(text)) return \"USD\";\n  if (/US\\$|USD/i.test(text)) return \"USD\";\n  return \"CLP\";\n}\nfunction detectLineCurrency(line, docCurrency) {\n  if (/US\\$|USD|U\\$S/i.test(line)) return \"USD\";\n  if (/\\$/.test(line)) return \"CLP\";\n  return docCurrency;\n}\n\n/* --------------- tokenizacion de numeros (separa concatenados) ----------- */\n// Un numero \"estricto\" completo en formato CL (1.234.567,89) o US (1,234,567.89)\n// o simple (123 / 123,45 / 123.45).\nconst STRICT_NUM = /^(?:\\d{1,3}(?:\\.\\d{3})+(?:,\\d{1,2})?|\\d{1,3}(?:,\\d{3})+(?:\\.\\d{1,2})?|\\d+(?:[.,]\\d{1,2})?)$/;\nfunction parseStrict(tok) { return STRICT_NUM.test(tok) ? toNum(tok, null) : null; }\n// Divide un token que son 2 numeros pegados (ej \"33,0033,00\", \"1,156.0013,872.00\").\nfunction splitTwo(tok) {\n  for (let k = 1; k < tok.length; k++) {\n    const a = tok.slice(0, k), b = tok.slice(k);\n    if (STRICT_NUM.test(a) && STRICT_NUM.test(b)) {\n      const na = toNum(a, null), nb = toNum(b, null);\n      if (na !== null && nb !== null) return [na, nb];\n    }\n  }\n  return null;\n}\n// Separa un \"run\" de digitos (posiblemente varios numeros concatenados por\n// pdf-parse, ej. \"19040,0040,00\" = modelo 190 + 40,00 + 40,00) pelando numeros\n// completos de DERECHA a IZQUIERDA. Prioriza: decimal (..,dd) > miles > entero.\nfunction flattenNumberRun(raw) {\n  let s = String(raw);\n  const out = [];\n  let guard = 0;\n  while (s && guard++ < 20) {\n    // Patrones ESPECIFICOS por formato para no cruzar el limite entre dos\n    // numeros concatenados (ej. \"1.112,001.112,00\" -> 1112 y 1112):\n    //   CL: miles con punto, decimal con coma   (1.234.567,89)\n    //   US: miles con coma, decimal con punto   (1,234,567.89)\n    // La parte entera inicial no puede empezar con 0 (salvo \"0\" solo), para no\n    // robar el ultimo cero del numero anterior en concatenaciones.\n    let m = s.match(/((?:0|[1-9]\\d{0,2})(?:\\.\\d{3})*,\\d{1,2})$/)   // CL con decimal\n        || s.match(/((?:0|[1-9]\\d{0,2})(?:,\\d{3})*\\.\\d{1,2})$/)    // US con decimal\n        || s.match(/([1-9]\\d{0,2}(?:\\.\\d{3})+)$/)                  // CL miles, sin decimal\n        || s.match(/([1-9]\\d{0,2}(?:,\\d{3})+)$/)                   // US miles, sin decimal\n        || s.match(/(\\d+)$/);                                      // entero simple\n    if (!m) break;\n    const v = toNum(m[1], null);\n    if (v !== null) out.unshift(v);\n    s = s.slice(0, s.length - m[1].length);\n  }\n  return out;\n}\n\n/* --------------- builders de item / costo --------------- */\nfunction buildItem(raw, index, exchange, docCurrency) {\n  const currency = normCur(raw.lineCurrency || raw.currency || docCurrency, \"UNKNOWN\");\n  const unitPrice = toNum(raw.unitPrice, null), total = toNum(raw.total, null);\n  const quantity = toNum(raw.quantity, 1) || 1;\n  const uConv = convertMoney(unitPrice, currency, exchange), tConv = convertMoney(total, currency, exchange);\n  return {\n    lineNumber: toNum(raw.lineNumber, index + 1), itemNumber: toNum(raw.lineNumber, index + 1),\n    sku: raw.sku || null, description: compact(raw.description), productName: compact(raw.description),\n    quantity, unit: raw.unit || \"UN\",\n    unitPrice, priceUnit: unitPrice, total, priceTotal: total, currency,\n    unitPriceOriginal: unitPrice, totalOriginal: total, originalCurrency: currency,\n    unitPriceClp: uConv.clp, totalClp: tConv.clp, unitPriceCLP: uConv.clp, totalCLP: tConv.clp,\n    convertedToClp: uConv.converted || tConv.converted,\n    brand: raw.brand || null, model: raw.model || null, notes: raw.rawLine || null\n  };\n}\nfunction buildCost(raw, exchange, docCurrency) {\n  const currency = normCur(raw.lineCurrency || raw.currency || docCurrency, \"UNKNOWN\");\n  const amount = toNum(raw.amount !== undefined ? raw.amount : raw.total, null);\n  const conv = convertMoney(amount, currency, exchange);\n  return {\n    concept: compact(raw.concept || raw.description || \"Costo asociado\"),\n    amount, currency, amountClp: conv.clp, amountCLP: conv.clp,\n    originalAmount: amount, originalCurrency: currency, raw: raw.rawLine || null\n  };\n}\n\n/* ====================================================================== *\n *  PROVEEDOR\n * ====================================================================== */\n// Solo NOMBRE + RUT canonicos (NO productos). Mejora la limpieza del nombre.\nconst SUPPLIER_BY_RUT = {\n  \"778527014\": { name: \"Tecno Mercado Spa\", rut: \"77.852.701-4\" },\n  \"76492780k\": { name: \"ADIS Grupo Tecnológico\", rut: \"76.492.780-k\" },\n  \"778262509\": { name: \"Comercial Echave Turri Limitada\", rut: \"77.826.250-9\" }\n};\nconst CLIENT_TOKENS = /master\\s*drilling|av\\.?\\s*aeropuerto\\s*9970|ricardo\\s+d[ií]az|servicios?\\s+para\\s+la\\s+miner[ií]a|ignacio\\s+maulen|francisco\\s+cris[oó]stomo|francisco\\s+crisotomo|gonzalo\\s+diaz/i;\nconst FORBIDDEN_SUPPLIER = /^(t[eé]rmino|tipo\\s+camb|ejecutivo|fecha|modo\\s+env[ií]o|señores?|contacto|comuna|cliente|direcci[oó]n|giro|att?\\.?|estimado|presente|cargo|fono|tel[eé]fono|mail|e-?mail|correo|banco|cuenta|rut|r\\.u\\.t|nº|n°|cotizaci[oó]n|vendedor|centro\\s+costo|atenci[oó]n|c\\.costo|telefono)/i;\n\nfunction cleanSupplierName(value) {\n  let n = compact(value)\n    .replace(/\\s*[\\-,]?\\s*(?:r\\.?u\\.?t\\.?|rut)\\s*[:.]?\\s*\\d[\\d.\\-kK]*.*$/i, \"\")\n    .replace(/\\s*cotizaci[oó]n.*$/i, \"\")\n    .replace(/\\s*nro?\\b.*$/i, \"\")\n    .replace(/\\s*n[°º]\\b.*$/i, \"\")\n    .replace(/^\\s*(nombre|empresa|raz[oó]n\\s+social)\\s*:\\s*/i, \"\")\n    .replace(/[._]{2,}/g, \" \")\n    .replace(/\\s{2,}/g, \" \").trim().replace(/[.,\\-\\s]+$/g, \"\").trim();\n  return compact(n);\n}\nfunction supplierFromDomain(text) {\n  const emails = [...text.matchAll(/\\b([a-z0-9._%-]+)@([a-z0-9.-]+\\.[a-z]{2,})\\b/gi)];\n  for (const e of emails) {\n    const base = e[2].replace(/^www\\./i, \"\").split(\".\")[0];\n    if (base && base.length >= 3 && !/gmail|hotmail|yahoo|outlook|live|icloud|masterdrilling/i.test(base))\n      return base.replace(/-/g, \" \").toUpperCase();\n  }\n  const web = text.match(/\\bwww\\.([a-z0-9\\-]{3,})\\.(?:cl|com|net|org)\\b/i);\n  if (web && !/masterdrilling/i.test(web[1])) return web[1].replace(/-/g, \" \").toUpperCase();\n  return null;\n}\n\n// Regla 9: 1) RUT conocido 2) \"Emitir OC\"/Datos OC/NOMBRE/Razon Social\n//          3) dominio/correo 4) encabezado con forma legal. Nunca cliente.\nfunction extractSupplier(text) {\n  const lines = norm(text).split(\"\\n\").map(l => l.trim()).filter(Boolean);\n  const rutList = allRut(text);\n  const normRuts = rutList.map(normRut);\n\n  // 1) RUT conocido\n  for (const key of Object.keys(SUPPLIER_BY_RUT))\n    if (normRuts.includes(key)) return { name: SUPPLIER_BY_RUT[key].name, rut: SUPPLIER_BY_RUT[key].rut, confidence: 0.99 };\n\n  let name = null, rut = null;\n\n  // 2) marcadores explicitos de proveedor (NOMBRE antes que \"Datos para OC\"\n  //    para no capturar la palabra \"NETO\" intermedia del layout roto).\n  name = firstMatch(text, /Emitir\\s+Orden(?:es)?\\s+de\\s+Compra\\s+a\\s*:?\\s*([^\\n\\r]{3,70})/i)\n      || firstMatch(text, /NOMBRE\\s*:\\s*([^\\n\\r]{3,70})/i)\n      || firstMatch(text, /Raz[oó]n\\s+Social\\s*:\\s*([^\\n\\r]{3,80})/i);\n  if (name) name = cleanSupplierName(name);\n  if (name && (FORBIDDEN_SUPPLIER.test(name) || CLIENT_TOKENS.test(name) || /^neto$/i.test(name))) name = null;\n\n  // 3) encabezado: primeras lineas con forma legal y sin tokens de cliente\n  if (!name) {\n    for (const line of lines.slice(0, 8)) {\n      const cl = cleanSupplierName(line);\n      if (cl.length < 4 || cl.length > 70) continue;\n      if (FORBIDDEN_SUPPLIER.test(cl) || CLIENT_TOKENS.test(cl)) continue;\n      if (/santiago|providencia|cerrillos|chile s\\.a/i.test(cl)) continue;\n      if (/\\b(S\\.?A\\.?|LTDA\\.?|LIMITADA|E\\.?I\\.?R\\.?L\\.?|SPA|SAC|COMERCIAL|SERVICIOS?|SOLUCIONES?|INGENier[ií]a|INTEGRALES|GRUPO|DISTRIBUIDORA|IMPORTADORA)\\b/i.test(cl)) { name = cl; break; }\n    }\n  }\n\n  // 4) dominio / correo\n  if (!name) name = supplierFromDomain(text);\n\n  // RUT del proveedor: cercano a marcador de OC/NOMBRE, o el primer RUT que NO\n  // este junto a \"cliente\"/Master Drilling.\n  const provSection = text.match(/(?:Emitir\\s+Orden(?:es)?\\s+de\\s+Compra\\s+a|Datos\\s+para\\s+Orden\\s+de\\s+Compra|NOMBRE\\s*:|Raz[oó]n\\s+Social\\s*:)[\\s\\S]{0,200}/i);\n  if (provSection) { const r = allRut(provSection[0])[0]; if (r) rut = r; }\n  if (!rut) {\n    for (const cand of rutList) {\n      const idx = text.indexOf(cand);\n      const around = idx >= 0 ? text.slice(Math.max(0, idx - 45), idx + 45) : \"\";\n      if (/cliente\\s*:/i.test(around) || CLIENT_TOKENS.test(around)) continue;\n      rut = cand; break;\n    }\n  }\n\n  const finalName = name ? cleanSupplierName(name) : \"Proveedor no identificado\";\n  return { name: finalName || \"Proveedor no identificado\", rut: rut || null,\n    confidence: finalName && finalName !== \"Proveedor no identificado\" ? 0.8 : 0.25 };\n}\n\nfunction extractTerms(text) {\n  return {\n    paymentTerms: firstMatch(text, /(?:forma\\s+de\\s+pago|condici[oó]n(?:es)?\\s+de\\s+pago|t[eé]rmino\\s+comercial|tipo\\s+de\\s+pago)\\s*[:.]\\s*([^\\n]+)/i) || null,\n    deliveryTime: firstMatch(text, /plazo\\s+de\\s+entrega\\s*[:.]?\\s*([^\\n]+)/i) || firstMatch(text, /modo\\s+env[ií]o\\s*[:.]?\\s*([^\\n]+)/i) || null,\n    availability: firstMatch(text, /(?:vigencia|v[aá]lida?|validez|vencimiento)[^\\n:]*[:.]?\\s*([^\\n]+)/i) || firstMatch(text, /(hasta\\s+agotar\\s+stock)/i) || null\n  };\n}\n\n/* ----------------------------- costos / rechazos ----------------------- */\n// Sin \\b final: el texto suele venir pegado al codigo/siguiente palabra.\nconst ASSOC_COST_RE = /(despacho|flete|env[ií]o|log[ií]stic[ao]|entrega|retiro|transporte|gastos?\\s+(?:de\\s+)?operaci[oó]n|cargo\\s+log[ií]stico|cobro\\s+log[ií]stic)/i;\nconst CONDITIONAL_RE = /\\b(si\\s+aplica|en\\s+caso\\s+de|por\\s+compras?\\s+inferiores?|inferiores?\\s+a|fuera\\s+del?\\s+per[ií]metro|fuera\\s+de\\s+santiago|seg[uú]n\\s+destino|cargo\\s+del\\s+cliente|cuenta\\s+del\\s+cliente|despacho\\s+a\\s+provincia|a\\s+convenir|consulte\\s+por)\\b/i;\nfunction isAssocCost(d) { return ASSOC_COST_RE.test(d); }\nfunction isConditional(l) { return CONDITIONAL_RE.test(l); }\n\n// Lineas que NUNCA son un item (rule 10).\nconst REJECT_LINE = /(^|\\b)(santiago|se[ñn]ores?|presente|estimado|att?\\b|atenci[oó]n|master\\s*drilling|dep[oó]sitos?|transferencias?|banco|cta\\.?\\s*corriente|cuenta\\s+corriente|tel[eé]fono|telefono|fono|celular|e-?mail|correo|p[aá]gina|condiciones?|observaci|forma\\s+de\\s+pago|plazo\\s+de|vigencia|validez|vencimiento|direcci[oó]n|giro|ejecutiv|vendedor|centro\\s+costo|c\\.costo|comuna|garant[ií]a|al\\s+d[ií]a\\s+de\\s+hoy|nueva\\s+llegada|stock|disponibl|firma|alcances?|conexi|materiales|peso|dimensiones|espesor|transparencia|tama[ñn]o|implementaci[oó]n|reforzar|planchas?\\s+de|perfil\\s+\\d|requisitos?|aud(?:io|iovisual)|servicios?\\s+(?:para|adicional|fuera))(\\b|:)/i;\nconst DATE_START = /^\\s*(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4}|\\d{1,2}\\s+de\\s+[a-zà-ÿ]+|al\\s+d[ií]a\\s+de\\s+hoy)/i;\nconst TOTALS_LINE = /^(sub\\s*total|total\\s*neto|total\\s*pagar|total\\s*general|total\\s*cotiz|total\\s*\\(?\\s*d[oó]lar|total\\b|neto\\b|i\\.?v\\.?a\\.?\\b|iva\\b|ila\\b|ahorro|descuento|registros?)\\b/i;\n\nfunction hasProductLetters(desc) {\n  const letters = (desc.match(/[A-Za-zÀ-ɏ]/g) || []).length;\n  return letters >= 3 && /[A-Za-zÀ-ɏ]{3,}/.test(desc) && /[aeiouà-ÿAEIOU]/i.test(desc);\n}\n\n/* --------------- nucleo: parseo de fila por invariante --------------- */\n// Extrae SKU/codigo aparente para no perderlo (no afecta numeros).\nfunction guessSku(raw) {\n  const m = raw.match(/\\bP\\/N\\s*([A-Z0-9][A-Z0-9\\-]{2,})/i) || raw.match(/\\b([A-Z]{1,4}\\d{3,}[A-Z0-9\\-]*)\\b/) || raw.match(/\\b(\\d{4,}-[\\dA-Z\\-]+)\\b/);\n  return m ? compact(m[1]) : null;\n}\n\nconst TABLE_HEADER = /(descripci[oó]n|detalle|glosa|producto).{0,40}(cant|cantidad|precio|valor|unit|total)|(c[oó]digo|item|n[°º]).{0,30}(descripci[oó]n|producto)|cantidad.{0,20}c[oó]digo|descripci[oó]n.{0,20}unitario/i;\nconst STOP_TABLE = /^(sub\\s*total|total\\s+neto|total\\s*pagar|total\\s*general|total\\s*cotiz|total\\s*\\(?\\s*d[oó]lar|total\\s*:|neto\\s*[:$]|neto$|datos\\s+para\\s+orden|condiciones|observaci|atentamente|firma|los\\s+leones|p[aá]gina\\s+\\d)/i;\n// Sub-encabezados de columnas (no son texto de producto ni item). Prefijo:\n// tolera puntuacion final (\"Sin I.V.A.\", \"T/CItem\", \"Cant.\").\nconst SUBHEADER = /^(sin\\s+i\\.?v\\.?a|t\\/c|item\\b|unitario|cantidad|c[oó]digo|descripci[oó]n|precio|valor\\s+unit|totales|und\\b|marca\\b|periodo|detalle|glosa|cant\\b|valor\\s+x)/i;\n\n// Intenta parsear una fila valorizada inline (>=2 numeros en la linea).\n// Devuelve item o null. pendingDesc se usa si la descripcion viene en lineas previas.\nfunction parsePricedRow(rawLine, docCurrency, pendingDesc) {\n  let raw = compact(rawLine);\n  if (!raw) return null;\n  if (DATE_START.test(raw)) return null;\n  if (REJECT_LINE.test(normSearch(raw))) return null;\n\n  const lineCur = detectLineCurrency(raw, docCurrency);\n\n  // base: simbolos de moneda y parentesis -> espacios (longitud preservada).\n  // No se enmascaran codigos: el tokenizador RTL separa modelo+precio pegados.\n  const base = raw.replace(/US\\$/gi, m => \" \".repeat(m.length)).replace(/U\\$S/gi, \"   \").replace(/\\$/g, \" \").replace(/[()]/g, \" \");\n\n  const runs = [];\n  const re = /\\d[\\d.,]*/g; let mm;\n  while ((mm = re.exec(base)) !== null) runs.push({ raw: mm[0], idx: mm.index, len: mm[0].length });\n  if (runs.length === 0) return null;\n\n  const flat = [];\n  for (let r = 0; r < runs.length; r++)\n    for (const n of flattenNumberRun(runs[r].raw)) flat.push({ value: n, runI: r });\n  if (flat.length < 2) return null;\n\n  const total = flat[flat.length - 1].value;\n  const unit = flat[flat.length - 2].value;\n  if (!(total > 0) || !(unit > 0)) return null;\n\n  // Guard anti-fragmento: numeros chicos sin separador ni simbolo de moneda\n  // suelen ser trozos de un codigo (ej. \"P/N 2HWN3\" -> 2 y 3). Rechazar.\n  const hasSym = /US\\$|U\\$S|\\$/.test(raw);\n  const totRaw = runs[flat[flat.length - 1].runI].raw, uniRaw = runs[flat[flat.length - 2].runI].raw;\n  if (!hasSym && total < 100 && unit < 100 && !/[.,]/.test(totRaw) && !/[.,]/.test(uniRaw)) return null;\n\n  const tol = Math.max(1, 0.02 * Math.abs(total));\n  let qty = null, qtyRunI = -1;\n  for (let i = flat.length - 3; i >= 0; i--) {\n    const q = flat[i].value;\n    if (Number.isInteger(q) && q >= 1 && q < 10000 && Math.abs(q * unit - total) <= tol) { qty = q; qtyRunI = flat[i].runI; break; }\n  }\n  if (qty === null) {\n    // fallback: digitos pegados justo antes del precio unitario (qty glued a codigo)\n    const unitIdx = runs[flat[flat.length - 2].runI].idx;\n    const pre = raw.slice(0, unitIdx).match(/(\\d{1,4})\\D{0,3}$/);\n    if (pre) { const q = parseInt(pre[1], 10); if (q >= 1 && q < 10000 && Math.abs(q * unit - total) <= tol) qty = q; }\n  }\n  if (qty === null) {\n    if (Math.abs(unit - total) <= tol) qty = 1;\n    else return null; // no cuadra qty*unit~=total -> NO es item (anti-basura)\n  }\n\n  // Descripcion: borra runs usados (unit/total/qty), conserva numeros de desc.\n  const usedRuns = new Set([flat[flat.length - 1].runI, flat[flat.length - 2].runI]);\n  if (qtyRunI >= 0) usedRuns.add(qtyRunI);\n  let descWork = base;\n  for (const rn of [...usedRuns].map(ri => runs[ri]).sort((a, b) => b.idx - a.idx))\n    descWork = descWork.slice(0, rn.idx) + \" \".repeat(rn.len) + descWork.slice(rn.idx + rn.len);\n  let desc = compact(descWork).replace(/^\\s*\\d{1,3}(?=\\D)/, \"\").trim(); // quita numero de item inicial\n\n  if ((!hasProductLetters(desc) || desc.length < 4) && pendingDesc && hasProductLetters(pendingDesc))\n    desc = compact(pendingDesc + \" \" + desc);\n  desc = compact(desc.replace(/\\b(UND|UN|UNI|GL|CU|SERV|PACK|SET|MES|D[IÍ]A|HORA|KG|LT|MT|EA|BOL|CJA|PQT|DP|BOX)\\b\\s*$/i, \"\"))\n    .replace(/^\\s*\\d{1,3}(?=\\D)/, \"\").trim();\n\n  // Si la descripcion empieza con un codigo/SKU pegado, separarlo.\n  let sku = guessSku(raw);\n  const skuLead = desc.match(/^([A-Za-zÀ-ÿ]{0,4}\\d{3,}[A-Za-z0-9\\-]*)\\s*/);\n  if (skuLead) {\n    const rest = compact(desc.slice(skuLead[0].length));\n    if (hasProductLetters(rest)) { desc = rest; if (!sku) sku = skuLead[1]; }\n  }\n\n  if (!hasProductLetters(desc)) return null;\n  if (REJECT_LINE.test(normSearch(desc))) return null;\n\n  return { sku, description: desc, quantity: qty, unit: \"UN\", unitPrice: unit, total, lineCurrency: lineCur, rawLine: raw };\n}\n\n// Linea que es solo un numero de dinero (precio en su propia linea).\nfunction moneyOnlyValue(line) {\n  const s = line.replace(/US\\$/gi, \" \").replace(/\\$/g, \" \").replace(/[()]/g, \" \").trim();\n  if (!/^[\\d.,]+$/.test(s)) return null;\n  if (!(/[.,]\\d{2}$/.test(s) || toNum(s, 0) >= 100)) return null; // descarta itemNo sueltos\n  const nums = flattenNumberRun(s);\n  return nums.length ? nums[nums.length - 1] : null;\n}\n\n/* --------------- parser de tabla: bounding por header + acumuladores ----- */\nfunction extractRows(text, docCurrency, warnings) {\n  const lines = norm(text).split(\"\\n\").map(l => compact(l)).filter(Boolean);\n  const items = [], costs = [];\n  let pendingDesc = \"\", pendingNums = [];\n  const resetPending = () => { pendingDesc = \"\"; pendingNums = []; };\n\n  const headerIdx = lines.findIndex(l => TABLE_HEADER.test(normSearch(l)));\n  const start = headerIdx >= 0 ? headerIdx + 1 : 0;\n  const strict = headerIdx < 0; // sin tabla: exigir simbolo de moneda por fila\n\n  const emit = (row, srcLine) => {\n    if (isAssocCost(row.description)) {\n      if (isConditional(srcLine) || isConditional(pendingDesc)) warnings.push(\"Costo condicional no aplicado: \" + row.description);\n      else costs.push(row);\n    } else items.push(row);\n    resetPending();\n  };\n\n  for (let i = start; i < lines.length; i++) {\n    const line = lines[i];\n    const search = normSearch(line);\n\n    if ((items.length > 0 || costs.length > 0) && STOP_TABLE.test(search)) break; // fin de tabla\n    if (/^item$/i.test(line)) { resetPending(); continue; }    // nuevo bloque ITEM\n    if (/^\\d{1,3}$/.test(line)) { resetPending(); continue; }  // numero de item suelto -> nuevo bloque\n    if (SUBHEADER.test(line)) continue;\n    if (TOTALS_LINE.test(search)) { resetPending(); continue; }\n\n    const hasCur = /US\\$|U\\$S|\\$/.test(line);\n    const row = (!strict || hasCur) ? parsePricedRow(line, docCurrency, pendingDesc) : null;\n    if (row) { emit(row, line); continue; }\n\n    // Precio en linea propia -> acumular numeros y emitir cuando haya 2 + desc.\n    const mv = (!strict || hasCur) ? moneyOnlyValue(line) : null;\n    if (mv !== null) {\n      pendingNums.push(mv);\n      if (pendingNums.length >= 2 && hasProductLetters(pendingDesc)) {\n        const unit = pendingNums[pendingNums.length - 2], total = pendingNums[pendingNums.length - 1];\n        const tol = Math.max(1, 0.02 * Math.abs(total));\n        let qty = 1;\n        if (unit > 0 && Math.abs(unit - total) > tol) { const q = Math.round(total / unit); if (q >= 1 && q < 10000 && Math.abs(q * unit - total) <= tol) qty = q; else { continue; } }\n        emit({ sku: guessSku(pendingDesc), description: compact(pendingDesc), quantity: qty, unit: \"UN\", unitPrice: unit, total, lineCurrency: detectLineCurrency(line, docCurrency), rawLine: pendingDesc + \" \" + line }, line);\n      }\n      continue;\n    }\n\n    if (DATE_START.test(line) || REJECT_LINE.test(search)) continue;\n    if (hasProductLetters(line) && line.length >= 4) {\n      pendingDesc = pendingDesc ? compact(pendingDesc + \" \" + line) : line;\n      if (pendingDesc.length > 320) pendingDesc = line;\n    }\n  }\n\n  // dedup\n  const seen = new Set(), uItems = [];\n  for (const it of items) {\n    const k = normSearch(it.description) + \"|\" + it.quantity + \"|\" + it.unitPrice + \"|\" + it.total + \"|\" + it.lineCurrency;\n    if (seen.has(k)) continue; seen.add(k); uItems.push(it);\n  }\n  return { items: uItems, costs };\n}\n\n/* --------------- totales --------------- */\nfunction explicitTotals(text) {\n  const clean = norm(text);\n  const getLast = re => { const ms = [...clean.matchAll(re)]; return ms.length ? toNum(ms[ms.length - 1][1], null) : null; };\n  return {\n    subtotal: getLast(/(?:sub\\s*total|total\\s+neto|neto)\\s*[:\\$\\s]*\\$?\\s*([\\d.,]+)/gi),\n    tax: getLast(/(?:i\\.?v\\.?a\\.?|iva)\\s*[:\\$\\s]*\\$?\\s*([\\d.,]+)/gi),\n    total: getLast(/total\\s*(?:a\\s+pagar|final|pagar|general)?\\s*[:\\$\\s]*\\$?\\s*([\\d.,]+)/gi),\n    value: getLast(/(?:valor\\s+del?\\s+servicio|costos?\\s+del?\\s+servicio|^\\s*valor[_\\s.:]*)\\s*\\$?\\s*([\\d.,]+)/gim),\n    hasPlusIva: /\\+\\s*iva|no\\s+incluyen?\\s+i\\.?v\\.?a|valores?\\s+netos?\\s*\\+\\s*iva/i.test(clean)\n  };\n}\nfunction extractGlobalDesc(text) {\n  const lines = norm(text).split(\"\\n\").map(l => compact(l)).filter(Boolean);\n  const STOP = /^(cotizaci[oó]n|santiago|señores?|presente|at\\.?|estimado|valor|costos?|emitir|rut|direcci[oó]n|atentamente|gerente|datos para|neto|iva|total|fecha|n[°º]|item|descripci[oó]n|observaci|condiciones|alcances|materiales|peso|dimensiones|espesor|tama[ñn]o|implementaci)/i;\n  const cands = lines.filter(l => l.length > 8 && l.length < 160).filter(l => !STOP.test(l))\n    .filter(l => !CLIENT_TOKENS.test(l)).filter(l => !/\\b\\d{1,2}\\.?\\d{3}\\.?\\d{3}-?[\\dkK]\\b/.test(l)).filter(l => !/^\\d+$/.test(l));\n  const strong = cands.find(l => /\\b(instalaci[oó]n|cierre|reja|servicio|arriendo|notebook|malla|suministro|mantenci[oó]n|reparaci[oó]n|proyecto|equipo)\\b/i.test(l));\n  return strong || cands[0] || \"Servicio cotizado\";\n}\n\n/* ============================ documento ============================== */\nfunction buildDocument(source, index) {\n  const text = source.textForAI || source.rawTextPreview || \"\";\n  const exchange = source.exchange || {};\n  const warnings = [...(source.warnings || [])];\n  const docCurrency = detectDocCurrency(text);\n  const supplier = extractSupplier(text);\n  const terms = extractTerms(text);\n\n  const { items: rawItems, costs: rawCosts } = extractRows(text, docCurrency, warnings);\n\n  let items = rawItems.map((it, i) => buildItem(it, i, exchange, docCurrency));\n  let associatedCosts = rawCosts.map(c => buildCost({ concept: c.description, total: c.total, lineCurrency: c.lineCurrency, rawLine: c.rawLine }, exchange, docCurrency));\n\n  // Aviso de flete/cargo condicional (no se aplica como costo).\n  const fleteCond = text.match(/(?:flete|despacho|cargo)[^\\n]{0,80}(?:inferiores?\\s+a|fuera\\s+de\\s+santiago|provincia|si\\s+aplica|cargo\\s+del\\s+cliente)[^\\n]{0,40}/i);\n  if (fleteCond) warnings.push(\"Condicion de flete/despacho informada (no aplicada como costo): \" + compact(fleteCond[0]));\n\n  const tot = explicitTotals(text);\n\n  // Documento de servicio global (sin tabla): 1 item desde el valor neto.\n  if (items.length === 0) {\n    let globalValue = tot.subtotal !== null ? tot.subtotal : (tot.value !== null ? tot.value : null);\n    // Validar: el monto debe aparecer en el texto con separador de miles\n    // (evita capturar numeros pegados tipo \"583942026\" = cotizacion+anio).\n    if (globalValue !== null && globalValue >= 1000) {\n      const fmt = globalValue.toLocaleString(\"es-CL\");\n      if (!text.includes(fmt)) globalValue = null;\n    }\n    if (globalValue !== null && globalValue > 0) {\n      items = [buildItem({ lineNumber: 1, sku: null, description: extractGlobalDesc(text), quantity: 1, unit: \"SERV\", unitPrice: globalValue, total: globalValue, lineCurrency: docCurrency }, 0, exchange, docCurrency)];\n      warnings.push((source.fileName || \"archivo\") + \": item global creado desde valor neto/servicio del documento.\");\n    }\n  }\n  if (tot.hasPlusIva) warnings.push(\"Valores netos + IVA segun el documento.\");\n\n  // Moneda mixta?\n  const curs = new Set(items.map(i => i.originalCurrency).filter(c => c && c !== \"UNKNOWN\"));\n  const mixedCurrency = curs.size > 1;\n\n  // Totales: preferir SUMA de items + costos (robusto frente al layout roto),\n  // con IVA 19%. Si no hay items pero hay total explicito, usarlo.\n  const itemsClpOk = items.length > 0 && items.every(i => i.totalClp !== null);\n  let subtotalClp = null, taxClp = null, totalClp = null;\n  if (items.length > 0 && itemsClpOk) {\n    subtotalClp = items.reduce((a, i) => a + (i.totalClp || 0), 0) + associatedCosts.reduce((a, c) => a + (c.amountClp || 0), 0);\n    taxClp = Math.round(subtotalClp * 0.19);\n    totalClp = subtotalClp + taxClp;\n  } else {\n    const sc = convertMoney(tot.subtotal !== null ? tot.subtotal : tot.value, docCurrency, exchange);\n    subtotalClp = sc.clp;\n    taxClp = tot.tax !== null ? convertMoney(tot.tax, docCurrency, exchange).clp : (subtotalClp !== null ? Math.round(subtotalClp * 0.19) : null);\n    totalClp = subtotalClp !== null && taxClp !== null ? subtotalClp + taxClp : convertMoney(tot.total, docCurrency, exchange).clp;\n  }\n\n  // Subtotal/IVA/total en moneda original (si moneda unica), util para mostrar.\n  let subtotal = null, tax = null, total = null, totalsCurrency = mixedCurrency ? \"CLP\" : docCurrency;\n  if (!mixedCurrency && items.length > 0) {\n    const sameCur = items.every(i => i.originalCurrency === items[0].originalCurrency) ? items[0].originalCurrency : docCurrency;\n    totalsCurrency = sameCur;\n    subtotal = items.reduce((a, i) => a + (i.total || 0), 0) + associatedCosts.reduce((a, c) => a + (c.amount || 0), 0);\n    tax = Math.round(subtotal * 0.19);\n    total = subtotal + tax;\n  } else if (mixedCurrency) {\n    subtotal = subtotalClp; tax = taxClp; total = totalClp; totalsCurrency = \"CLP\";\n  } else {\n    subtotal = tot.subtotal !== null ? tot.subtotal : tot.value;\n    tax = tot.tax; total = tot.total;\n  }\n\n  if (!supplier.rut) warnings.push((source.fileName || \"archivo\") + \": no se identifico RUT del proveedor.\");\n  const isValid = items.length > 0;\n  if (!isValid) warnings.push((source.fileName || \"archivo\") + \": no se extrajo ningun item valido (revisar OCR/formato).\");\n\n  return {\n    fileName: source.fileName || (\"archivo_\" + (index + 1) + \".pdf\"),\n    fileKind: \"pdf\", ext: \"pdf\", mimeType: \"application/pdf\",\n    detectedType: isValid ? \"quotation\" : \"unknown\", isValidQuotation: isValid, valid: isValid, omitted: !isValid,\n    supplierName: supplier.name, supplierRut: supplier.rut,\n    supplier: { name: supplier.name, rut: supplier.rut, confidence: supplier.confidence },\n    documentNumber: extractDocNumber(text), documentDate: extractDate(text),\n    currency: totalsCurrency, mixedCurrency,\n    normalizedCurrency: normCur((exchange && exchange.targetCurrency) || \"CLP\", \"CLP\"),\n    paymentTerms: terms.paymentTerms, deliveryTime: terms.deliveryTime, availability: terms.availability,\n    subtotal, tax, total, shippingCost: null,\n    subtotalClp, taxClp, totalClp,\n    quoteSubtotal: subtotal, quoteTax: tax, quoteTotal: total,\n    quoteSubtotalClp: subtotalClp, quoteTaxClp: taxClp, quoteTotalClp: totalClp,\n    associatedCosts, items,\n    rawTextPreview: source.rawTextPreview || \"\",\n    extractionMetadata: source.extractionMetadata || {},\n    warnings\n  };\n}\n\n/* ============================ orquestacion ============================== */\nconst documents = [], omittedFiles = [], warnings = [], errors = [];\nlet jobId = null, exchange = {}, evaluationData = {};\n\nfor (let i = 0; i < sourceItems.length; i++) {\n  const source = sourceItems[i] && sourceItems[i].json ? sourceItems[i].json : {};\n  jobId = jobId || source.jobId || null;\n  exchange = source.exchange || exchange;\n  evaluationData = source.evaluationData || evaluationData;\n\n  let doc;\n  try {\n    doc = buildDocument(source, i);\n  } catch (err) {\n    doc = {\n      fileName: source.fileName || (\"archivo_\" + (i + 1) + \".pdf\"),\n      fileKind: \"pdf\", ext: \"pdf\", mimeType: \"application/pdf\",\n      detectedType: \"unknown\", isValidQuotation: false, valid: false, omitted: true,\n      supplierName: \"Proveedor no identificado\", supplierRut: null,\n      supplier: { name: \"Proveedor no identificado\", rut: null, confidence: 0 },\n      documentNumber: null, documentDate: null, currency: \"CLP\", mixedCurrency: false, normalizedCurrency: \"CLP\",\n      paymentTerms: null, deliveryTime: null, availability: null,\n      subtotal: null, tax: null, total: null, shippingCost: null,\n      subtotalClp: null, taxClp: null, totalClp: null,\n      quoteSubtotal: null, quoteTax: null, quoteTotal: null,\n      associatedCosts: [], items: [],\n      rawTextPreview: source.rawTextPreview || \"\", extractionMetadata: source.extractionMetadata || {},\n      warnings: [\"Error interno del parser: \" + (err && err.message ? err.message : String(err))]\n    };\n    errors.push((source.fileName || \"archivo\") + \": \" + (err && err.message ? err.message : String(err)));\n  }\n\n  documents.push(doc);\n  if (doc.warnings) warnings.push.apply(warnings, doc.warnings);\n  if (!doc.isValidQuotation) {\n    omittedFiles.push({\n      fileName: doc.fileName, fileKind: \"pdf\", ext: \"pdf\", mimeType: \"application/pdf\",\n      detectedType: doc.detectedType, supplierName: doc.supplierName, supplierRut: doc.supplierRut,\n      reason: \"No se pudieron extraer items valorizados.\",\n      missingFields: [\"items valorizados\"], action: \"Revisar si el PDF contiene texto seleccionable.\"\n    });\n  }\n}\n\nconst preOmitted = (sourceItems[0] && sourceItems[0].json && sourceItems[0].json.omittedFiles) || [];\nfor (const o of preOmitted) if (!omittedFiles.some(x => x.fileName === o.fileName)) omittedFiles.push(o);\n\nconst validDocuments = documents.filter(d => d.isValidQuotation && Array.isArray(d.items) && d.items.length > 0);\nconst responseOk = validDocuments.length > 0;\n\nreturn [{ json: {\n  ok: responseOk,\n  source: \"n8n-embudo-pdf-v2-invariant-generic\",\n  jobId, exchange, evaluationData,\n  summary: {\n    jobId,\n    filesProcessed: documents.length,\n    documentsDetected: documents.length,\n    validQuotations: validDocuments.length,\n    omittedFiles: omittedFiles.length,\n    totalItems: validDocuments.reduce(function (a, d) { return a + (d.items ? d.items.length : 0); }, 0),\n    suppliersDetected: [...new Set(validDocuments.map(function (d) { return d.supplier && d.supplier.name ? d.supplier.name : d.supplierName; }).filter(Boolean))],\n    warnings: warnings.length,\n    errors: errors.length\n  },\n  documents, validDocuments, validQuotations: validDocuments,\n  omittedFiles, warnings,\n  errors: responseOk ? errors : [...errors, \"No se genero resultado valido.\"]\n} }];\n"
+      },
+      "id": "deterministic-final-stable-001",
+      "name": "Build Deterministic Final Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        430,
+        -30
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 200,
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "application/json; charset=utf-8"
+              },
+              {
+                "name": "Access-Control-Allow-Origin",
+                "value": "https://embudo.onrender.com"
+              },
+              {
+                "name": "Access-Control-Allow-Methods",
+                "value": "POST, OPTIONS"
+              },
+              {
+                "name": "Access-Control-Allow-Headers",
+                "value": "Content-Type, Authorization"
+              }
+            ]
+          }
+        }
+      },
+      "id": "respond-final-stable-001",
+      "name": "Respond 200 Extracted JSON EMBUDO",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        760,
+        100
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook POST /embudo-extract-quotes": {
+      "main": [
+        [
+          {
+            "node": "Validate PDF Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate PDF Request": {
+      "main": [
+        [
+          {
+            "node": "IF Is Valid PDF?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Is Valid PDF?": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Build No Valid PDF Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Prepare PDF Text For AI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare PDF Text For AI": {
+      "main": [
+        [
+          {
+            "node": "Build Deterministic Final Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Deterministic Final Response": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Extracted JSON EMBUDO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build No Valid PDF Response": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Extracted JSON EMBUDO",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "embudo-v2-parser-robusto-final-001",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "70aba02c8a4ac3d69b16bdeb94b18ac7988a33b3113da4a5adcc3871cef13c47"
+  },
+  "nodeGroups": [],
+  "tags": []
+}
