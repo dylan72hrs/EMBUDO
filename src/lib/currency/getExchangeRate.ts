@@ -14,10 +14,19 @@ export type ExchangeRateResult = {
   date: string;
 };
 
-const BCENTRAL_INDICATORS_URL =
-  "https://si3.bcentral.cl/Indicadoressiete/secure/Indicadoresdiarios.aspx";
+// Source 1: Banco Central public HTML pages (no auth required)
+const BCENTRAL_PUBLIC_URLS = [
+  "https://www.bcentral.cl/indicadores-financieros/tipos-de-cambio-de-referencia",
+  "https://si3.bcentral.cl/Indicadoresdiarios/secure/IndicadoresDiariosYM.aspx",
+];
+
+// Source 2: Mindicador.cl - Chilean public JSON API backed by Banco Central / CMF
+const MINDICADOR_URL = "https://mindicador.cl/api/dolar";
+
 const DEFAULT_EXCHANGE_RATE_MARGIN_CLP = 5;
 const DEFAULT_FALLBACK_EXCHANGE_RATE_CLP_PER_USD = 950;
+
+// ---- helpers ----------------------------------------------------------------
 
 function parsePositive(value?: string | number | null) {
   if (value === undefined || value === null) return undefined;
@@ -97,59 +106,110 @@ function parseChileanNumber(rawValue: string) {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-function extractObservedDollar(html: string) {
-  const labelPattern = /D[oó]lar\s+observado/i;
+function extractObservedDollarFromHtml(html: string): number | undefined {
+  const labelPattern = /D[o\u00f3]lar\s+observado/i;
   const labelMatch = labelPattern.exec(html);
-  if (!labelMatch || labelMatch.index < 0) return undefined;
-
-  const slice = html.slice(labelMatch.index, labelMatch.index + 800);
-  const valueMatch = /<label[^>]*>\s*([\d\.,]+)\s*<\/label>/i.exec(slice);
-  if (!valueMatch) return undefined;
-
-  return parseChileanNumber(valueMatch[1]);
+  if (labelMatch && labelMatch.index >= 0) {
+    const slice = html.slice(labelMatch.index, labelMatch.index + 1200);
+    const labelValue = /<label[^>]*>\s*([\d\.,]+)\s*<\/label>/i.exec(slice);
+    if (labelValue) {
+      const parsed = parseChileanNumber(labelValue[1]);
+      if (parsed) return parsed;
+    }
+    const spanValue = /<span[^>]*>\s*([\d\.,]+)\s*<\/span>/i.exec(slice);
+    if (spanValue) {
+      const parsed = parseChileanNumber(spanValue[1]);
+      if (parsed) return parsed;
+    }
+    const bareValue = />\s*([\d]{3,4}[,.][ \d]{2,4})\s*</i.exec(slice);
+    if (bareValue) {
+      const parsed = parseChileanNumber(bareValue[1]);
+      if (parsed && parsed > 100 && parsed < 9999) return parsed;
+    }
+  }
+  return undefined;
 }
 
-async function fetchObservedDollarFromBcentral() {
+async function fetchWithTimeout(url: string, timeoutMs: number): Promise<Response | undefined> {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 5000);
-
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    const response = await fetch(BCENTRAL_INDICATORS_URL, {
+    const response = await fetch(url, {
       method: "GET",
       headers: {
-        Accept: "text/html,application/xhtml+xml",
-        "User-Agent": "Mozilla/5.0"
+        Accept: "text/html,application/xhtml+xml,application/json",
+        "User-Agent": "Mozilla/5.0 (compatible; EMBUDO/1.0)"
       },
       cache: "no-store",
       signal: controller.signal
     });
-    if (!response.ok) return undefined;
-
-    const html = await response.text();
-    return extractObservedDollar(html);
-  } catch {
-    return undefined;
-  } finally {
     clearTimeout(timeout);
+    return response.ok ? response : undefined;
+  } catch {
+    clearTimeout(timeout);
+    return undefined;
   }
 }
+
+// ---- Source 1: Banco Central HTML -------------------------------------------
+
+async function fetchFromBcentral(): Promise<number | undefined> {
+  for (const url of BCENTRAL_PUBLIC_URLS) {
+    try {
+      const response = await fetchWithTimeout(url, 6000);
+      if (!response) continue;
+      const html = await response.text();
+      const value = extractObservedDollarFromHtml(html);
+      if (value) return value;
+    } catch {
+      // try next URL
+    }
+  }
+  return undefined;
+}
+
+// ---- Source 2: Mindicador.cl JSON API ---------------------------------------
+
+async function fetchFromMindicador(): Promise<number | undefined> {
+  try {
+    const response = await fetchWithTimeout(MINDICADOR_URL, 8000);
+    if (!response) return undefined;
+
+    const json = (await response.json()) as {
+      serie?: Array<{ fecha?: string; valor?: number }>;
+    };
+
+    const serie = json?.serie;
+    if (!Array.isArray(serie) || serie.length === 0) return undefined;
+
+    const valor = serie[0]?.valor;
+    if (typeof valor === "number" && Number.isFinite(valor) && valor > 0) return valor;
+    return undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+// ---- public helpers ---------------------------------------------------------
 
 export function parseExchangeRateValue(value?: string | number | null) {
   return parsePositive(value);
 }
 
-export async function getExchangeRate(request: ExchangeRateRequest = {}): Promise<ExchangeRateResult> {
+// ---- main export ------------------------------------------------------------
+
+export async function getExchangeRate(
+  request: ExchangeRateRequest = {}
+): Promise<ExchangeRateResult> {
   const marginResult = parseMargin(request.exchangeRateMarginClp);
   const { margin } = marginResult;
   const warnings = [...marginResult.warnings];
   const requestedMode = request.exchangeRateMode === "manual" ? "manual" : "auto";
 
+  // Manual mode
   if (requestedMode === "manual") {
     const manualRate = parsePositive(request.manualExchangeRateClpPerUsd);
-    if (!manualRate) {
-      throw new Error("Tipo de cambio manual invalido.");
-    }
-
+    if (!manualRate) throw new Error("Tipo de cambio manual invalido.");
     const finalRate = manualRate + margin;
     return buildResult(
       manualRate,
@@ -157,31 +217,46 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
       "manual",
       [
         ...warnings,
-        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar base ${formatRate(
-          manualRate
-        )} + margen adicional ${formatRate(margin)}.`
+        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar base ${formatRate(manualRate)} + margen ${formatRate(margin)}.`
       ],
       "Manual"
     );
   }
 
-  const observed = await fetchObservedDollarFromBcentral();
-  if (observed) {
-    const finalRate = observed + margin;
+  // Auto: Source 1 - Banco Central
+  const bcentral = await fetchFromBcentral();
+  if (bcentral) {
+    const finalRate = bcentral + margin;
     return buildResult(
-      observed,
+      bcentral,
       margin,
       "auto",
       [
         ...warnings,
-        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar base observado ${formatRate(
-          observed
-        )} + margen adicional ${formatRate(margin)}.`
+        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar observado ${formatRate(bcentral)} + margen ${formatRate(margin)}.`
       ],
       "Banco Central"
     );
   }
 
+  // Auto: Source 2 - Mindicador.cl
+  const mindicador = await fetchFromMindicador();
+  if (mindicador) {
+    const finalRate = mindicador + margin;
+    return buildResult(
+      mindicador,
+      margin,
+      "auto",
+      [
+        ...warnings,
+        "Dolar observado obtenido de Mindicador.cl (fuente oficial: Banco Central / CMF).",
+        `Tipo de cambio final: ${formatRate(finalRate)} CLP/USD = dolar ${formatRate(mindicador)} + margen ${formatRate(margin)}.`
+      ],
+      "Mindicador (Banco Central)"
+    );
+  }
+
+  // Auto: Source 3 - env var override
   const envOverride = parsePositive(process.env.EXCHANGE_RATE_CLP_PER_USD);
   if (envOverride) {
     const finalRate = envOverride + margin;
@@ -191,15 +266,14 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
       "env",
       [
         ...warnings,
-        "No fue posible obtener el dolar observado automaticamente.",
-        `Se utilizo dolar base de entorno ${formatRate(envOverride)} CLP/USD mas margen adicional ${formatRate(
-          margin
-        )} CLP/USD. Tipo de cambio final aplicado: ${formatRate(finalRate)} CLP/USD.`
+        "No se pudo obtener dolar observado de Banco Central ni Mindicador.",
+        `Se uso dolar de entorno ${formatRate(envOverride)} CLP/USD + margen ${formatRate(margin)}. Final: ${formatRate(finalRate)}.`
       ],
       "Entorno"
     );
   }
 
+  // Auto: Source 4 - hardcoded fallback
   const fallback =
     parsePositive(process.env.FALLBACK_EXCHANGE_RATE_CLP_PER_USD) ??
     DEFAULT_FALLBACK_EXCHANGE_RATE_CLP_PER_USD;
@@ -211,10 +285,8 @@ export async function getExchangeRate(request: ExchangeRateRequest = {}): Promis
     "fallback",
     [
       ...warnings,
-      "No fue posible obtener el dolar observado automaticamente.",
-      `Se utilizo dolar base de respaldo ${formatRate(fallback)} CLP/USD mas margen adicional ${formatRate(
-        margin
-      )} CLP/USD. Tipo de cambio final aplicado: ${formatRate(finalRate)} CLP/USD.`
+      "No se pudo obtener dolar observado automaticamente (Banco Central ni Mindicador).",
+      `Se uso dolar de respaldo ${formatRate(fallback)} CLP/USD + margen ${formatRate(margin)}. Final: ${formatRate(finalRate)}.`
     ],
     "fallback"
   );
