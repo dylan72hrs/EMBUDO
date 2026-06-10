@@ -2,7 +2,8 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import { clearTemplateDynamicFields } from "@/lib/excel/clearTemplateDynamicFields";
 import { highlightBestPrices, highlightCascadePrices, type CascadeRowItem } from "@/lib/excel/highlightBestPrices";
-import { writeDashboard } from "@/lib/excel/writeDashboard";
+import { writeDashboardData, writeDashboardSummary } from "@/lib/excel/writeDashboard";
+import { injectDashboardCharts } from "@/lib/excel/injectDashboardCharts";
 import { TEMPLATE_MAP } from "@/lib/excel/templateMap";
 import { outputExcelPath } from "@/lib/utils/fileStorage";
 import type { ComparisonItem, ConsolidatedComparison, Currency, SupplierOffer } from "@/lib/validations/quoteSchemas";
@@ -771,10 +772,13 @@ export async function generateComparisonExcel(
     highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
   }
 
-  // ── Dashboard below main table ──────────────────────────────────────────────
+  // ── Dashboard_Data sheet (hidden, feeds native bar charts) ─────────────────
+  writeDashboardData(workbook, data);
+
+  // ── Executive summary text block (below main table) ─────────────────────────
   const lastTableRow = shiftedTemplateRow(TEMPLATE_MAP.rows.buyerResponsible, footerRowOffset);
-  const dashboardStartRow = Math.max(worksheet.rowCount + 1, lastTableRow + 6);
-  writeDashboard(worksheet, data, dashboardStartRow, {
+  const summaryStartRow = Math.max(worksheet.rowCount + 1, lastTableRow + 6);
+  writeDashboardSummary(worksheet, data, summaryStartRow, {
     omittedFilesCount: options.omittedFilesCount,
     needsReviewCount: options.needsReviewCount,
   });
@@ -783,6 +787,10 @@ export async function generateComparisonExcel(
 
   const finalPath = outputExcelPath(jobId);
   await workbook.xlsx.writeFile(finalPath);
+
+  // ── Inject RESUMEN sheet with native Excel charts ───────────────────────────
+  const chartTemplatePath = path.join(process.cwd(), "templates", "dashboard_chart_template.xlsx");
+  await injectDashboardCharts(finalPath, chartTemplatePath);
 
   return {
     outputPath: path.normalize(finalPath),

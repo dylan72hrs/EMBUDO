@@ -87,6 +87,9 @@ export function highlightCascadePrices(
     const lowest = Math.min(...prices);
     const highest = Math.max(...prices);
 
+    // All prices identical → nothing to highlight
+    if (lowest === highest) continue;
+
     for (const entry of valid) {
       const fill =
         entry.price === lowest ? WINNER_FILL : entry.price === highest ? LOSER_FILL : undefined;
@@ -138,13 +141,22 @@ export function highlightBestPrices(
     const lowest = Math.min(...candidates.map((candidate) => candidate.amount));
     const highest = Math.max(...candidates.map((candidate) => candidate.amount));
 
+    // All prices identical → clear any stale highlight, don't add new one
+    if (lowest === highest) {
+      for (const candidate of candidates) {
+        clearComparisonFill(worksheet.getCell(rowNumber, candidate.block.unitPriceColumn));
+        clearComparisonFill(worksheet.getCell(rowNumber, candidate.block.totalColumn));
+      }
+      continue;
+    }
+
     for (const candidate of candidates) {
       const fill =
         candidate.amount === lowest
           ? WINNER_FILL
           : candidate.amount === highest
-            ? LOSER_FILL
-            : undefined;
+          ? LOSER_FILL
+          : undefined;
       if (!fill) {
         clearComparisonFill(worksheet.getCell(rowNumber, candidate.block.unitPriceColumn));
         clearComparisonFill(worksheet.getCell(rowNumber, candidate.block.totalColumn));
