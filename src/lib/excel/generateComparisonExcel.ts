@@ -1,7 +1,8 @@
 import path from "node:path";
 import ExcelJS from "exceljs";
 import { clearTemplateDynamicFields } from "@/lib/excel/clearTemplateDynamicFields";
-import { highlightBestPrices } from "@/lib/excel/highlightBestPrices";
+import { highlightBestPrices, highlightCascadePrices, type CascadeRowItem } from "@/lib/excel/highlightBestPrices";
+import { writeDashboard } from "@/lib/excel/writeDashboard";
 import { TEMPLATE_MAP } from "@/lib/excel/templateMap";
 import { outputExcelPath } from "@/lib/utils/fileStorage";
 import type { ComparisonItem, ConsolidatedComparison, Currency, SupplierOffer } from "@/lib/validations/quoteSchemas";
@@ -29,6 +30,7 @@ type CascadeWriteResult = {
   footerRowOffset: number;
   finalDataRow: number;
   blocks: CascadeBlock[];
+  rowItems: CascadeRowItem[];
 };
 
 export type SupplierEvaluationInput = {
@@ -53,6 +55,8 @@ export type AdditionalEvaluationData = {
 export type GenerateComparisonExcelOptions = {
   folio?: string;
   additionalEvaluation?: AdditionalEvaluationData;
+  omittedFilesCount?: number;
+  needsReviewCount?: number;
 };
 
 function writeFolioCell(worksheet: ExcelJS.Worksheet, folio: string) {
@@ -355,6 +359,7 @@ function writeCascadeBlocks(
 
   insertStyledProductRows(worksheet, footerRowOffset);
 
+  const rowItems: CascadeRowItem[] = [];
   let rowNumber = TEMPLATE_MAP.productStartRow;
   for (const [blockIndex, block] of blocks.entries()) {
     const ownerBlock = TEMPLATE_MAP.supplierBlocks[block.supplierIndex];
@@ -387,6 +392,20 @@ function writeCascadeBlocks(
         options.warnings.push(`Moneda no determinada para ${item.product} - ${block.supplierName}`);
       }
 
+      const cascadePrice = validPositive(item.total)
+        ? item.total
+        : validPositive(item.unitPrice)
+          ? item.unitPrice
+          : null;
+      rowItems.push({
+        supplierIndex: block.supplierIndex,
+        itemNumber: item.item,
+        rowNumber,
+        price: cascadePrice,
+        unitPriceColumn: ownerBlock.unitPriceColumn,
+        totalColumn: ownerBlock.totalColumn,
+      });
+
       rowNumber += 1;
     }
 
@@ -398,7 +417,8 @@ function writeCascadeBlocks(
   return {
     footerRowOffset,
     finalDataRow,
-    blocks
+    blocks,
+    rowItems,
   };
 }
 
@@ -745,10 +765,19 @@ export async function generateComparisonExcel(
 
   if (cascadeResult) {
     writeCascadePurchaseTotals(worksheet, cascadeResult.blocks, footerRowOffset);
+    highlightCascadePrices(worksheet, cascadeResult.rowItems);
   } else {
     writePurchaseTotals(worksheet, itemsToWrite, suppliersToWrite);
     highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
   }
+
+  // ── Dashboard below main table ──────────────────────────────────────────────
+  const lastTableRow = shiftedTemplateRow(TEMPLATE_MAP.rows.buyerResponsible, footerRowOffset);
+  const dashboardStartRow = Math.max(worksheet.rowCount + 1, lastTableRow + 6);
+  writeDashboard(worksheet, data, dashboardStartRow, {
+    omittedFilesCount: options.omittedFilesCount,
+    needsReviewCount: options.needsReviewCount,
+  });
 
   workbook.calcProperties.fullCalcOnLoad = true;
 

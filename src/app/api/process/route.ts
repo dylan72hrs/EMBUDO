@@ -751,7 +751,8 @@ export async function POST(request: Request) {
       exchangeRate: exchange
     });
     const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId, {
-      additionalEvaluation: mergedAdditionalEvaluation
+      additionalEvaluation: mergedAdditionalEvaluation,
+      omittedFilesCount: omittedInvalidCount > 0 ? omittedInvalidCount : undefined,
     });
     const allWarnings = userFacingWarnings([...new Set([...warnings, ...generated.warnings])]);
     const analytics = buildPurchaseAnalytics(consolidated, allWarnings.length);

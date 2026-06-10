@@ -4,16 +4,16 @@ import type { ComparisonItem, SupplierSummary } from "@/lib/validations/quoteSch
 
 type TemplateMap = typeof TEMPLATE_MAP;
 
-const WINNER_FILL: ExcelJS.Fill = {
+export const WINNER_FILL: ExcelJS.Fill = {
   type: "pattern",
   pattern: "solid",
-  fgColor: { argb: "FFE2F0D9" }
+  fgColor: { argb: "FFC6EFCE" }
 };
 
-const LOSER_FILL: ExcelJS.Fill = {
+export const LOSER_FILL: ExcelJS.Fill = {
   type: "pattern",
   pattern: "solid",
-  fgColor: { argb: "FFFCE4D6" }
+  fgColor: { argb: "FFFFC7CE" }
 };
 
 function hasFormula(cell: ExcelJS.Cell) {
@@ -44,13 +44,58 @@ function applyFill(cell: ExcelJS.Cell, fill: ExcelJS.Fill) {
 function isComparisonFill(fill: ExcelJS.Fill | undefined) {
   if (!fill || fill.type !== "pattern" || fill.pattern !== "solid") return false;
   if (!fill.fgColor?.argb) return false;
-  return fill.fgColor.argb === "FFE2F0D9" || fill.fgColor.argb === "FFFCE4D6";
+  return (
+    fill.fgColor.argb === "FFC6EFCE" ||
+    fill.fgColor.argb === "FFFFC7CE" ||
+    // legacy values in case template already has old colors
+    fill.fgColor.argb === "FFE2F0D9" ||
+    fill.fgColor.argb === "FFFCE4D6"
+  );
 }
 
 function clearComparisonFill(cell: ExcelJS.Cell) {
   if (hasFormula(cell) || !validPrice(cell.value)) return;
   if (isComparisonFill(cell.fill)) {
     cell.style = { ...cell.style, fill: undefined };
+  }
+}
+
+export type CascadeRowItem = {
+  supplierIndex: number;
+  itemNumber: number;
+  rowNumber: number;
+  price: number | null;
+  unitPriceColumn: number;
+  totalColumn: number;
+};
+
+export function highlightCascadePrices(
+  worksheet: ExcelJS.Worksheet,
+  rowItems: CascadeRowItem[]
+) {
+  const byItem = new Map<number, CascadeRowItem[]>();
+  for (const ri of rowItems) {
+    if (!byItem.has(ri.itemNumber)) byItem.set(ri.itemNumber, []);
+    byItem.get(ri.itemNumber)!.push(ri);
+  }
+
+  for (const entries of byItem.values()) {
+    const valid = entries.filter((e) => validPrice(e.price));
+    if (valid.length < 2) continue;
+
+    const prices = valid.map((e) => e.price as number);
+    const lowest = Math.min(...prices);
+    const highest = Math.max(...prices);
+
+    for (const entry of valid) {
+      const fill =
+        entry.price === lowest ? WINNER_FILL : entry.price === highest ? LOSER_FILL : undefined;
+      if (!fill) continue;
+      const unitCell = worksheet.getCell(entry.rowNumber, entry.unitPriceColumn);
+      const totalCell = worksheet.getCell(entry.rowNumber, entry.totalColumn);
+      applyFill(unitCell, fill);
+      applyFill(totalCell, fill);
+    }
   }
 }
 
