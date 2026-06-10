@@ -667,32 +667,46 @@ export async function consolidateQuotes(
   }
 
   for (const quote of quotes) {
-    const comparableItems = quote.items.filter(isComparableProduct);
-    const usdCount = comparableItems.filter((item) => item.currency === "USD").length;
-    const clpCount = comparableItems.filter((item) => item.currency === "CLP").length;
-    const unknownCount = comparableItems.filter((item) => item.currency === "UNKNOWN").length;
+    const quoteComparableItems = quote.items.filter(isComparableProduct);
+    const usdCount = quoteComparableItems.filter((item) => item.currency === "USD").length;
+    const clpCount = quoteComparableItems.filter((item) => item.currency === "CLP").length;
+    const unknownCount = quoteComparableItems.filter((item) => item.currency === "UNKNOWN").length;
     const convertedCount =
       conversionTracker.convertedPerSupplier.get(quote.supplierName) ?? 0;
 
-    if (usdCount > 0 && clpCount > 0) {
+    // Use quote-level declared currency as authoritative signal when item-level
+    // currencies are ambiguous.  The LLM sometimes tags individual items as CLP
+    // even when the document header declares USD; the actual conversion is
+    // performed correctly via quote.currency, so the warning must reflect that.
+    const docCurrency =
+      quote.currency && quote.currency !== "UNKNOWN" ? quote.currency : undefined;
+
+    // Effective counts: if items show 0 USD but the document is declared USD,
+    // treat all comparable items as USD for warning purposes.
+    const effectiveUsdCount =
+      usdCount > 0 ? usdCount : docCurrency === "USD" ? quoteComparableItems.length : 0;
+    const effectiveClpCount =
+      clpCount > 0 && docCurrency !== "USD" ? clpCount : docCurrency === "CLP" ? clpCount : 0;
+
+    if (effectiveUsdCount > 0 && effectiveClpCount > 0) {
       warnings.push(
         formatWarning(
           "CONVERSION DE MONEDAS",
-          `${quote.supplierName}: se detectaron productos en USD y CLP. Los productos en USD fueron convertidos a CLP (${convertedCount} conversiones) y los productos en CLP se mantuvieron sin conversion.`
+`${quote.supplierName}: cotizacion con moneda mixta (USD y CLP). Los productos en USD fueron convertidos a CLP (${convertedCount} conversiones) y los productos en CLP se mantuvieron sin conversion.`
         )
       );
-    } else if (usdCount > 0) {
+    } else if (effectiveUsdCount > 0) {
       warnings.push(
         formatWarning(
           "CONVERSION DE MONEDAS",
-          `${quote.supplierName}: se detectaron ${usdCount} productos en USD. Se convirtieron a CLP usando el tipo de cambio final configurado.`
+`${quote.supplierName}: productos detectados originalmente en USD; convertidos a CLP usando tipo de cambio ${exchange.finalRate} CLP/USD.`
         )
       );
-    } else if (clpCount > 0) {
+    } else if (effectiveClpCount > 0) {
       warnings.push(
         formatWarning(
           "CONVERSION DE MONEDAS",
-          `${quote.supplierName}: productos detectados originalmente en CLP, sin conversion de moneda.`
+`${quote.supplierName}: productos detectados originalmente en CLP, sin conversion de moneda.`
         )
       );
     }
@@ -701,7 +715,7 @@ export async function consolidateQuotes(
       warnings.push(
         formatWarning(
           "RIESGOS",
-          `${quote.supplierName}: ${unknownCount} linea(s) con moneda no detectada requieren revision manual.`
+`${quote.supplierName}: ${unknownCount} linea(s) con moneda no detectada requieren revision manual.`
         )
       );
     }
