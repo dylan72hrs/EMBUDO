@@ -161,3 +161,112 @@ export async function injectDashboardCharts(
   });
   await fs.writeFile(outputPath, buffer);
 }
+
+// ── strip helper ──────────────────────────────────────────────────────────────
+
+/**
+ * Removes the injected RESUMEN sheet (and its drawing/charts) from the output
+ * file so ExcelJS can safely re-read it (ExcelJS crashes on chart anchors).
+ * Returns true if charts were found and removed, false if nothing to strip.
+ * After your ExcelJS operation, call injectDashboardCharts again to restore.
+ */
+export async function stripDashboardCharts(outputPath: string): Promise<boolean> {
+  const buf = await fs.readFile(outputPath);
+  const zip = await JSZip.loadAsync(buf);
+
+  const [workbookXml, workbookRelsXml, contentTypesXml] = await Promise.all([
+    readZipFile(zip, "xl/workbook.xml"),
+    readZipFile(zip, "xl/_rels/workbook.xml.rels"),
+    readZipFile(zip, "[Content_Types].xml"),
+  ]);
+
+  // Find RESUMEN sheet entry → grab its rId
+  const sheetEntryMatch = workbookXml.match(
+    /<sheet[^>]*name="RESUMEN"[^>]*r:id="(rId\d+)"[^>]*\/>/
+  );
+  if (!sheetEntryMatch) return false;
+
+  const resumenRId = sheetEntryMatch[1];
+
+  // Resolve sheet file from workbook.xml.rels
+  const relMatch = workbookRelsXml.match(
+    new RegExp(`Id="${resumenRId}"[^>]*Target="([^"]+)"`)
+  );
+  if (!relMatch) return false;
+
+  const sheetTarget   = relMatch[1]; // e.g. "worksheets/sheet5.xml"
+  const sheetNumMatch = sheetTarget.match(/sheet(\d+)\.xml$/);
+  if (!sheetNumMatch) return false;
+
+  const sheetNum      = sheetNumMatch[1];
+  const sheetPath     = `xl/${sheetTarget}`;
+  const sheetRelsPath = `xl/worksheets/_rels/sheet${sheetNum}.xml.rels`;
+
+  // Resolve drawing from sheet rels
+  let drawingPath: string | null = null;
+  let drawingNum: string | null  = null;
+  const sheetRelsFile = zip.file(sheetRelsPath);
+  if (sheetRelsFile) {
+    const sheetRelsXml = await sheetRelsFile.async("string");
+    const dm = sheetRelsXml.match(/Target="[^"]*drawings\/drawing(\d+)\.xml"/);
+    if (dm) {
+      drawingNum  = dm[1];
+      drawingPath = `xl/drawings/drawing${drawingNum}.xml`;
+    }
+  }
+
+  // Resolve charts from drawing rels
+  const chartPaths: string[] = [];
+  if (drawingNum) {
+    const drawingRelsPath = `xl/drawings/_rels/drawing${drawingNum}.xml.rels`;
+    const drawingRelsFile = zip.file(drawingRelsPath);
+    if (drawingRelsFile) {
+      const drawingRelsXml = await drawingRelsFile.async("string");
+      for (const m of drawingRelsXml.matchAll(/Target="[^"]*charts\/(chart\d+\.xml)"/g)) {
+        chartPaths.push(`xl/charts/${m[1]}`);
+      }
+      zip.remove(drawingRelsPath);
+    }
+  }
+
+  // Remove injected files
+  zip.remove(sheetPath);
+  zip.remove(sheetRelsPath);
+  if (drawingPath) zip.remove(drawingPath);
+  for (const cp of chartPaths) zip.remove(cp);
+
+  // Patch workbook.xml
+  const updatedWorkbook = workbookXml.replace(
+    /<sheet[^>]*name="RESUMEN"[^>]*\/>/g,
+    ""
+  );
+
+  // Patch workbook.xml.rels
+  const updatedWorkbookRels = workbookRelsXml.replace(
+    new RegExp(`<Relationship[^>]*Id="${resumenRId}"[^>]*\\/>`),
+    ""
+  );
+
+  // Patch [Content_Types].xml
+  const pathsToRemove = [sheetPath, ...(drawingPath ? [drawingPath] : []), ...chartPaths];
+  let updatedContentTypes = contentTypesXml;
+  for (const p of pathsToRemove) {
+    const escaped = p.replace(/\//g, "\\/");
+    updatedContentTypes = updatedContentTypes.replace(
+      new RegExp(`<Override[^>]*PartName="\/${escaped}"[^>]*\/>`),
+      ""
+    );
+  }
+
+  zip.file("xl/workbook.xml",            updatedWorkbook);
+  zip.file("xl/_rels/workbook.xml.rels",  updatedWorkbookRels);
+  zip.file("[Content_Types].xml",         updatedContentTypes);
+
+  const cleaned = await zip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  });
+  await fs.writeFile(outputPath, cleaned);
+  return true;
+}

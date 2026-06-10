@@ -3,7 +3,7 @@ import ExcelJS from "exceljs";
 import { clearTemplateDynamicFields } from "@/lib/excel/clearTemplateDynamicFields";
 import { highlightBestPrices, highlightCascadePrices, type CascadeRowItem } from "@/lib/excel/highlightBestPrices";
 import { writeDashboardData, writeDashboardSummary } from "@/lib/excel/writeDashboard";
-import { injectDashboardCharts } from "@/lib/excel/injectDashboardCharts";
+import { injectDashboardCharts, stripDashboardCharts } from "@/lib/excel/injectDashboardCharts";
 import { TEMPLATE_MAP } from "@/lib/excel/templateMap";
 import { outputExcelPath } from "@/lib/utils/fileStorage";
 import type { ComparisonItem, ConsolidatedComparison, Currency, SupplierOffer } from "@/lib/validations/quoteSchemas";
@@ -799,6 +799,13 @@ export async function generateComparisonExcel(
 }
 
 export async function applyFolioToGeneratedExcel(excelPath: string, folio: string) {
+  // ExcelJS crashes reading files that have injected chart sheets (chart anchors
+  // in drawings are not handled by ExcelJS's drawing parser).
+  // Solution: strip the RESUMEN chart sheet, let ExcelJS apply the folio, then
+  // re-inject the charts.
+  const chartTemplatePath = path.join(process.cwd(), "templates", "dashboard_chart_template.xlsx");
+  const hadCharts = await stripDashboardCharts(excelPath);
+
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.readFile(excelPath);
   const worksheet = workbook.getWorksheet(TEMPLATE_MAP.sheetName);
@@ -809,4 +816,8 @@ export async function applyFolioToGeneratedExcel(excelPath: string, folio: strin
   writeFolioCell(worksheet, folio);
   workbook.calcProperties.fullCalcOnLoad = true;
   await workbook.xlsx.writeFile(excelPath);
+
+  if (hadCharts) {
+    await injectDashboardCharts(excelPath, chartTemplatePath);
+  }
 }
