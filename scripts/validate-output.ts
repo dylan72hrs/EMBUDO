@@ -54,10 +54,19 @@ function cellText(value: ExcelJS.CellValue) {
   return String(value);
 }
 
-// El bloque "PANEL EJECUTIVO DE COMPRAS" se escribe varias filas debajo de la
-// tabla y agrega merges propias; solo se comparan las merges del area de la
-// tabla comparativa de la plantilla.
+// El "PANEL EJECUTIVO DE COMPRAS" se escribe a la derecha de la tabla (columnas
+// R+ , fuera de los 6 bloques de proveedor que terminan en P) y agrega merges
+// propias; solo se comparan las merges del area de la tabla comparativa.
 const TEMPLATE_TABLE_LAST_ROW = TEMPLATE_MAP.rows.buyerResponsible + 2;
+const PANEL_FIRST_COLUMN = 18; // R
+
+function columnLettersToNumber(letters: string) {
+  let result = 0;
+  for (const char of letters) {
+    result = result * 26 + (char.charCodeAt(0) - 64);
+  }
+  return result;
+}
 
 function comparableMerges(worksheet: ExcelJS.Worksheet) {
   const merges = [
@@ -65,8 +74,10 @@ function comparableMerges(worksheet: ExcelJS.Worksheet) {
   ];
   return merges
     .filter((range) => {
-      const match = range.match(/[A-Z]+(\d+)/);
-      return match ? Number(match[1]) <= TEMPLATE_TABLE_LAST_ROW : true;
+      const match = range.match(/([A-Z]+)(\d+)/);
+      if (!match) return true;
+      if (columnLettersToNumber(match[1]) >= PANEL_FIRST_COLUMN) return false;
+      return Number(match[2]) <= TEMPLATE_TABLE_LAST_ROW;
     })
     .sort();
 }

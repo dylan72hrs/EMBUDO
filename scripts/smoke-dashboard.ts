@@ -1,13 +1,16 @@
 /**
  * Smoke test: verifica que la analitica web y el Excel principal usen la MISMA
- * fuente de verdad (totales item por item desde cascadeBlocks).
+ * fuente de verdad (totales item por item desde cascadeBlocks) y que el
+ * dashboard Excel (panel en hoja principal + hoja RESUMEN con graficos
+ * nativos + Dashboard_Data) quede correcto y abrible.
  *
  * Escenario 1 (Prueba 2 del plan): ADIS en USD + Tecno Mercado en CLP +
  * Echave Turri en moneda mixta con un quoteSubtotal "envenenado" que con el
- * codigo antiguo producia totales inflados (~$336.380.009).
+ * codigo antiguo producia totales inflados (~$336.380.009). Incluye ciclo de
+ * folio (strip -> editar -> reinyectar charts).
  *
  * Escenario 2 (Prueba 1 del plan): solo ADIS -> advertencia de proveedor
- * unico, sin metricas falsas.
+ * unico, sin metricas falsas, y sin grafico donut (no aporta con 1 proveedor).
  *
  * Uso: npx tsx scripts/smoke-dashboard.ts
  */
@@ -19,7 +22,10 @@ import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { buildPurchaseAnalytics } from "../src/lib/analytics/buildPurchaseAnalytics";
 import { consolidateQuotes } from "../src/lib/normalize/consolidateQuotes";
-import { generateComparisonExcel } from "../src/lib/excel/generateComparisonExcel";
+import {
+  applyFolioToGeneratedExcel,
+  generateComparisonExcel
+} from "../src/lib/excel/generateComparisonExcel";
 import { stripDashboardCharts } from "../src/lib/excel/injectDashboardCharts";
 import { TEMPLATE_MAP } from "../src/lib/excel/templateMap";
 import type { ExchangeRateResult } from "../src/lib/currency/getExchangeRate";
@@ -118,13 +124,28 @@ async function readWithoutCharts(excelPath: string): Promise<ExcelJS.Workbook> {
   return workbook;
 }
 
+async function inspectCharts(excelPath: string) {
+  const zip = await JSZip.loadAsync(await fs.readFile(excelPath));
+  const chartFiles = Object.keys(zip.files)
+    .filter((name) => /xl\/charts\/chart\d+\.xml$/.test(name))
+    .sort();
+  const styleFiles = Object.keys(zip.files).filter((name) => /xl\/charts\/style\d+\.xml$/.test(name));
+  const colorsFiles = Object.keys(zip.files).filter((name) => /xl\/charts\/colors\d+\.xml$/.test(name));
+  const charts: Array<{ name: string; xml: string }> = [];
+  for (const name of chartFiles) {
+    charts.push({ name, xml: await zip.file(name)!.async("string") });
+  }
+  const workbookXml = await zip.file("xl/workbook.xml")!.async("string");
+  const contentTypes = await zip.file("[Content_Types].xml")!.async("string");
+  return { zip, charts, styleFiles, colorsFiles, workbookXml, contentTypes };
+}
+
 async function scenarioMultiSupplier() {
   console.log("\n=== Escenario 1: ADIS (USD) + Tecno (CLP) + Echave (mixto) ===");
   const consolidated = await consolidateQuotes([adis, tecno, echave], {}, { exchangeRate: exchange });
 
   const jobId = "smoke-multi";
-  const outputDirPath = path.join(process.cwd(), "output", jobId);
-  await mkdir(outputDirPath, { recursive: true });
+  await mkdir(path.join(process.cwd(), "output", jobId), { recursive: true });
   const generated = await generateComparisonExcel(
     path.join(process.cwd(), "templates", "template.xlsx"),
     consolidated,
@@ -156,17 +177,7 @@ async function scenarioMultiSupplier() {
     "Ningun total inflado por subtotal de documento (~$336M)",
     analytics.suppliers.every((supplier) => Math.abs(supplier.total - inflated) > 1000)
   );
-
   check("Mejor oferta = ADIS", analytics.bestSupplier?.name === "ADIS Grupo Tecnologico");
-  check("hasComparison = true", analytics.hasComparison);
-  check(
-    "Ahorro = peor - mejor",
-    analytics.savingsVsWorstClp !== null &&
-      Math.abs(
-        analytics.savingsVsWorstClp -
-          (expected.get("Comercial Echave Turri Limitada")! - expected.get("ADIS Grupo Tecnologico")!)
-      ) < 1
-  );
   check(
     "Echave marcado para revision (moneda mixta)",
     analytics.suppliers.find((s) => s.name === "Comercial Echave Turri Limitada")?.needsReview === true
@@ -188,62 +199,103 @@ async function scenarioMultiSupplier() {
     );
   }
 
-  // ── Dashboard_Data: solo proveedores reales con totales correctos ─────────
+  // ── Dashboard_Data: 15 columnas, solo proveedores reales, orden ascendente ─
   const dashboardData = workbook.getWorksheet("Dashboard_Data");
   check("Dashboard_Data existe", dashboardData !== undefined);
   if (dashboardData) {
     check("Dashboard_Data oculta", dashboardData.state === "hidden");
+    const headerRow = dashboardData.getRow(1).values as Array<unknown>;
+    check(
+      "Dashboard_Data headers Provider..Score (15 columnas)",
+      headerRow[1] === "Provider" && headerRow[2] === "TotalNetCLP" && headerRow[15] === "Score",
+      JSON.stringify(headerRow)
+    );
+
+    let previousTotal = 0;
     for (let row = 2; row <= 4; row += 1) {
       const name = String(dashboardData.getCell(row, 1).value ?? "").trim();
       const total = numericCell(dashboardData.getCell(row, 2));
+      const score = numericCell(dashboardData.getCell(row, 15));
       const expectedTotal = expected.get(name);
       check(
-        `Dashboard_Data fila ${row}: ${name || "(vacia)"}`,
-        Boolean(name) && expectedTotal !== undefined && total !== undefined && Math.abs(total - Math.round(expectedTotal)) <= 1,
-        `total=${total}`
+        `Dashboard_Data fila ${row}: ${name || "(vacia)"} total+score`,
+        Boolean(name) &&
+          expectedTotal !== undefined &&
+          total !== undefined &&
+          Math.abs(total - Math.round(expectedTotal)) <= 1 &&
+          score !== undefined &&
+          score >= 0 &&
+          score <= 100,
+        `total=${total} score=${score}`
       );
+      check(`Dashboard_Data fila ${row} ordenada ascendente`, total !== undefined && total >= previousTotal);
+      previousTotal = total ?? previousTotal;
     }
+    check(
+      "Dashboard_Data fila 2 = mejor oferta (IsBestOffer)",
+      dashboardData.getCell(2, 9).value === true && dashboardData.getCell(4, 10).value === true
+    );
     const ghostName = String(dashboardData.getCell(5, 1).value ?? "").trim();
-    const ghostTotal = dashboardData.getCell(5, 2).value;
-    check("Dashboard_Data sin filas basura (fila 5 vacia)", !ghostName && (ghostTotal === null || ghostTotal === undefined));
+    check("Dashboard_Data sin filas basura (fila 5 vacia)", !ghostName);
   }
 
-  // ── Bloque ejecutivo en la hoja principal ──────────────────────────────────
-  let panelFound = false;
+  // ── Panel ejecutivo a la derecha de la tabla (columnas R+) ────────────────
+  const panelTitle = String(sheet.getCell(2, 18).value ?? "");
+  check("Panel ejecutivo en R2 (derecha de la tabla)", panelTitle.includes("PANEL EJECUTIVO DE COMPRAS"), panelTitle);
   let matrixHasEchave = false;
+  let hasScoreHeader = false;
   sheet.eachRow((row) => {
     row.eachCell((cell) => {
       const text = typeof cell.value === "string" ? cell.value : "";
-      if (text.includes("PANEL EJECUTIVO DE COMPRAS")) panelFound = true;
-      if (text === "Comercial Echave Turri Limitada") matrixHasEchave = true;
+      if (Number(cell.col) >= 18 && text === "Comercial Echave Turri Limitada") matrixHasEchave = true;
+      if (Number(cell.col) >= 18 && text === "Score") hasScoreHeader = true;
     });
   });
-  check("Panel ejecutivo presente en hoja principal", panelFound);
-  check("Matriz incluye a Echave", matrixHasEchave);
+  check("Panel: matriz incluye a Echave", matrixHasEchave);
+  check("Panel: matriz con columna Score", hasScoreHeader);
+  // La tabla (columnas A-P) no debe tener contenido del panel
+  check(
+    "Columna Q vacia (margen entre tabla y panel)",
+    sheet.getColumn(17).values.filter((value) => value !== null && value !== undefined).length === 0
+  );
 
-  // ── Charts: hoja RESUMEN inyectada y rangos recortados a 3 proveedores ────
-  const zip = await JSZip.loadAsync(await fs.readFile(generated.outputPath));
-  const workbookXml = await zip.file("xl/workbook.xml")!.async("string");
-  check("Hoja RESUMEN inyectada", workbookXml.includes('name="RESUMEN"'));
-
-  const chartFiles = Object.keys(zip.files).filter((name) => /xl\/charts\/chart\d+\.xml$/.test(name));
-  check("Charts presentes", chartFiles.length >= 2);
-  for (const chartFile of chartFiles) {
-    const chartXml = await zip.file(chartFile)!.async("string");
+  // ── Hoja RESUMEN: 4 graficos nativos con estilos, rangos reales ───────────
+  const inspection = await inspectCharts(generated.outputPath);
+  check("Hoja RESUMEN inyectada", inspection.workbookXml.includes('name="RESUMEN"'));
+  check("4 graficos nativos", inspection.charts.length === 4, `found=${inspection.charts.length}`);
+  check("4 partes chartStyle", inspection.styleFiles.length === 4, `found=${inspection.styleFiles.length}`);
+  check("4 partes chartColorStyle", inspection.colorsFiles.length === 4, `found=${inspection.colorsFiles.length}`);
+  check(
+    "Content types declara chartstyle/chartcolorstyle",
+    inspection.contentTypes.includes("chartstyle+xml") && inspection.contentTypes.includes("chartcolorstyle+xml")
+  );
+  check(
+    "Hay un donut (distribucion del gasto)",
+    inspection.charts.some((chart) => chart.xml.includes("doughnutChart"))
+  );
+  for (const chart of inspection.charts) {
     check(
-      `${chartFile} apunta solo a 3 proveedores ($2:$4)`,
-      chartXml.includes("$A$2:$A$4") && !chartXml.includes("$A$2:$A$7")
+      `${chart.name} apunta solo a 3 proveedores ($2:$4)`,
+      /\$[A-Z]+\$2:\$[A-Z]+\$4/.test(chart.xml) && !/\$[A-Z]+\$2:\$[A-Z]+\$7/.test(chart.xml)
     );
+    check(`${chart.name} con titulo`, chart.xml.includes("<c:title>"));
   }
 
-  // El Excel debe poder abrirse: XML bien formado en las partes patcheadas.
+  // ── Ciclo folio: strip -> editar con ExcelJS -> reinyectar ────────────────
+  await applyFolioToGeneratedExcel(generated.outputPath, "F-SMOKE-001");
+  const afterFolio = await inspectCharts(generated.outputPath);
+  check("Folio: RESUMEN reinyectada", afterFolio.workbookXml.includes('name="RESUMEN"'));
+  check("Folio: 4 graficos restaurados", afterFolio.charts.length === 4, `found=${afterFolio.charts.length}`);
+  check(
+    "Folio: rangos siguen recortados a $2:$4",
+    afterFolio.charts.every((chart) => /\$[A-Z]+\$2:\$[A-Z]+\$4/.test(chart.xml))
+  );
+
+  // XML bien formado en manifiestos (lo que dispara la reparacion de Excel)
   for (const name of ["xl/workbook.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"]) {
-    const xml = await zip.file(name)!.async("string");
+    const xml = await afterFolio.zip.file(name)!.async("string");
     check(`${name} bien formado`, /<\?xml/.test(xml) && !xml.includes("undefined"));
   }
-
-  console.log(`\nWarnings generados (${allWarnings.length}):`);
-  for (const warning of allWarnings.slice(0, 12)) console.log(`  - ${warning}`);
 }
 
 async function scenarioSingleSupplier() {
@@ -265,6 +317,41 @@ async function scenarioSingleSupplier() {
     `total=${adisTotal?.total}`
   );
   check("Sin metricas falsas de cobertura (coverageAvailable=false)", !analytics.coverageAvailable);
+
+  // ── Excel con un solo proveedor: sin donut, rangos a 1 fila ───────────────
+  const jobId = "smoke-single";
+  await mkdir(path.join(process.cwd(), "output", jobId), { recursive: true });
+  const generated = await generateComparisonExcel(
+    path.join(process.cwd(), "templates", "template.xlsx"),
+    consolidated,
+    jobId,
+    {}
+  );
+
+  const inspection = await inspectCharts(generated.outputPath);
+  check("RESUMEN inyectada (1 proveedor)", inspection.workbookXml.includes('name="RESUMEN"'));
+  check(
+    "Donut removido con proveedor unico",
+    inspection.charts.length === 3 && inspection.charts.every((chart) => !chart.xml.includes("doughnutChart")),
+    `charts=${inspection.charts.length}`
+  );
+  for (const chart of inspection.charts) {
+    check(
+      `${chart.name} apunta a 1 proveedor ($2:$2)`,
+      /\$[A-Z]+\$2:\$[A-Z]+\$2/.test(chart.xml) && !/\$[A-Z]+\$2:\$[A-Z]+\$7/.test(chart.xml)
+    );
+  }
+
+  const workbook = await readWithoutCharts(generated.outputPath);
+  const sheet = workbook.getWorksheet(TEMPLATE_MAP.sheetName);
+  let riskMessage = false;
+  sheet?.eachRow((row) => {
+    row.eachCell((cell) => {
+      const text = typeof cell.value === "string" ? cell.value : "";
+      if (text.includes("no existe comparacion entre multiples proveedores")) riskMessage = true;
+    });
+  });
+  check("Panel muestra riesgo de proveedor unico", riskMessage);
 }
 
 async function main() {

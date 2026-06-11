@@ -2,7 +2,7 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import { clearTemplateDynamicFields } from "@/lib/excel/clearTemplateDynamicFields";
 import { highlightBestPrices, highlightCascadePrices, type CascadeRowItem } from "@/lib/excel/highlightBestPrices";
-import { writeDashboardData, writeDashboardSummary } from "@/lib/excel/writeDashboard";
+import { writeDashboardData, writeDashboardPanel } from "@/lib/excel/writeDashboard";
 import { injectDashboardCharts, stripDashboardCharts } from "@/lib/excel/injectDashboardCharts";
 import { TEMPLATE_MAP } from "@/lib/excel/templateMap";
 import { outputExcelPath } from "@/lib/utils/fileStorage";
@@ -772,13 +772,11 @@ export async function generateComparisonExcel(
     highlightBestPrices(worksheet, itemsToWrite, suppliersToWrite, TEMPLATE_MAP);
   }
 
-  // ── Dashboard_Data sheet (hidden, feeds native bar charts) ─────────────────
+  // ── Dashboard_Data sheet (hidden, feeds the native charts) ──────────────────
   const dashboardSupplierCount = writeDashboardData(workbook, data);
 
-  // ── Executive summary text block (below main table) ─────────────────────────
-  const lastTableRow = shiftedTemplateRow(TEMPLATE_MAP.rows.buyerResponsible, footerRowOffset);
-  const summaryStartRow = Math.max(worksheet.rowCount + 1, lastTableRow + 6);
-  writeDashboardSummary(worksheet, data, summaryStartRow, {
+  // ── Executive panel to the right of the table (columns R+) ──────────────────
+  writeDashboardPanel(worksheet, data, {
     omittedFilesCount: options.omittedFilesCount,
     needsReviewCount: options.needsReviewCount,
   });
