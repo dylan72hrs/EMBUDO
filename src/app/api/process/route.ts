@@ -13,7 +13,10 @@ import {
   parseExchangeRateValue,
   type ExchangeRateRequest
 } from "@/lib/currency/getExchangeRate";
-import { buildPurchaseAnalytics } from "@/lib/analytics/buildPurchaseAnalytics";
+import {
+  buildPurchaseAnalytics,
+  countSuppliersNeedingReview
+} from "@/lib/analytics/buildPurchaseAnalytics";
 import {
   extractQuotesFromN8n,
   getN8nDiagnostics,
@@ -750,12 +753,13 @@ export async function POST(request: Request) {
     const consolidated = await consolidateQuotes(parsedQuotes, exchangeRateRequest, {
       exchangeRate: exchange
     });
+    const needsReviewCount = countSuppliersNeedingReview(consolidated, warnings);
     const generated = await generateComparisonExcel(templatePath, consolidated, activeJobId, {
       additionalEvaluation: mergedAdditionalEvaluation,
       omittedFilesCount: omittedInvalidCount > 0 ? omittedInvalidCount : undefined,
+      needsReviewCount: needsReviewCount > 0 ? needsReviewCount : undefined,
     });
     const allWarnings = userFacingWarnings([...new Set([...warnings, ...generated.warnings])]);
-    const analytics = buildPurchaseAnalytics(consolidated, allWarnings.length);
 
     if (omittedInvalidCount > 0) {
       allWarnings.push(
@@ -766,6 +770,10 @@ export async function POST(request: Request) {
         } cotizacion de proveedor.`
       );
     }
+
+    const analytics = buildPurchaseAnalytics(consolidated, allWarnings, {
+      omittedFilesCount: omittedInvalidCount
+    });
 
     for (const item of consolidated.comparison) {
       await prisma.comparisonItem.create({

@@ -52,11 +52,25 @@ async function readZipFile(zip: JSZip, name: string): Promise<string> {
   return f.async("string");
 }
 
+/**
+ * The template charts reference 'Dashboard_Data'!$A$2:$A$7 (6 supplier slots).
+ * Trims the series end row so the charts only cover the real suppliers written
+ * by writeDashboardData (no empty categories / zero bars).
+ */
+function trimChartRanges(chartXml: string, supplierCount: number): string {
+  if (!Number.isInteger(supplierCount) || supplierCount < 1 || supplierCount >= 6) {
+    return chartXml;
+  }
+  const lastRow = 1 + supplierCount;
+  return chartXml.replace(/(\$[A-Z]+\$2:\$[A-Z]+\$)7/g, `$1${lastRow}`);
+}
+
 // ── main export ───────────────────────────────────────────────────────────────
 
 export async function injectDashboardCharts(
   outputPath: string,
-  templatePath: string
+  templatePath: string,
+  supplierCount?: number
 ): Promise<void> {
   // 1. Load both ZIPs
   const [outputBuf, templateBuf] = await Promise.all([
@@ -119,13 +133,13 @@ export async function injectDashboardCharts(
     .replace(/Target="[^"]*chart1\.xml"/, `Target="/${chart1Path}"`)
     .replace(/Target="[^"]*chart2\.xml"/, `Target="/${chart2Path}"`);
 
-  // 7. Write new files into output ZIP
+  // 7. Write new files into output ZIP (chart ranges trimmed to real suppliers)
   outputZip.file(sheetPath,       tplSheet);
   outputZip.file(sheetRelsPath,   patchedSheetRels);
   outputZip.file(drawingPath,     tplDrawing);
   outputZip.file(drawingRelsPath, patchedDrawingRels);
-  outputZip.file(chart1Path,      tplChart1);
-  outputZip.file(chart2Path,      tplChart2);
+  outputZip.file(chart1Path,      trimChartRanges(tplChart1, supplierCount ?? 0));
+  outputZip.file(chart2Path,      trimChartRanges(tplChart2, supplierCount ?? 0));
 
   // 8. Patch workbook.xml – add <sheet .../> before </sheets>
   const updatedWorkbook = workbookXml.replace(

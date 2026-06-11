@@ -54,8 +54,21 @@ function cellText(value: ExcelJS.CellValue) {
   return String(value);
 }
 
+// El bloque "PANEL EJECUTIVO DE COMPRAS" se escribe varias filas debajo de la
+// tabla y agrega merges propias; solo se comparan las merges del area de la
+// tabla comparativa de la plantilla.
+const TEMPLATE_TABLE_LAST_ROW = TEMPLATE_MAP.rows.buyerResponsible + 2;
+
 function comparableMerges(worksheet: ExcelJS.Worksheet) {
-  return [...(((worksheet as unknown as { model: { merges?: string[] } }).model.merges ?? []) as string[])].sort();
+  const merges = [
+    ...(((worksheet as unknown as { model: { merges?: string[] } }).model.merges ?? []) as string[])
+  ];
+  return merges
+    .filter((range) => {
+      const match = range.match(/[A-Z]+(\d+)/);
+      return match ? Number(match[1]) <= TEMPLATE_TABLE_LAST_ROW : true;
+    })
+    .sort();
 }
 
 function hasVisibleCurrencyFormat(cell: ExcelJS.Cell) {

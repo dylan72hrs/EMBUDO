@@ -773,7 +773,7 @@ export async function generateComparisonExcel(
   }
 
   // ── Dashboard_Data sheet (hidden, feeds native bar charts) ─────────────────
-  writeDashboardData(workbook, data);
+  const dashboardSupplierCount = writeDashboardData(workbook, data);
 
   // ── Executive summary text block (below main table) ─────────────────────────
   const lastTableRow = shiftedTemplateRow(TEMPLATE_MAP.rows.buyerResponsible, footerRowOffset);
@@ -790,7 +790,9 @@ export async function generateComparisonExcel(
 
   // ── Inject RESUMEN sheet with native Excel charts ───────────────────────────
   const chartTemplatePath = path.join(process.cwd(), "templates", "dashboard_chart_template.xlsx");
-  await injectDashboardCharts(finalPath, chartTemplatePath);
+  if (dashboardSupplierCount > 0) {
+    await injectDashboardCharts(finalPath, chartTemplatePath, dashboardSupplierCount);
+  }
 
   return {
     outputPath: path.normalize(finalPath),
@@ -818,6 +820,15 @@ export async function applyFolioToGeneratedExcel(excelPath: string, folio: strin
   await workbook.xlsx.writeFile(excelPath);
 
   if (hadCharts) {
-    await injectDashboardCharts(excelPath, chartTemplatePath);
+    // Re-trim chart ranges to the real supplier rows in Dashboard_Data.
+    let supplierCount = 0;
+    const dashboardData = workbook.getWorksheet("Dashboard_Data");
+    if (dashboardData) {
+      for (let row = 2; row <= 7; row += 1) {
+        const name = dashboardData.getCell(row, 1).value;
+        if (typeof name === "string" && name.trim().length > 0) supplierCount += 1;
+      }
+    }
+    await injectDashboardCharts(excelPath, chartTemplatePath, supplierCount);
   }
 }
