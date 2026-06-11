@@ -28,11 +28,17 @@ body {
 }
 
 .embudo-bg-video-initial {
-  object-position: top;
+  /* Centrado (no anclado arriba) para que se vea la franja inferior del video
+     (creditos), con un leve zoom-out; el borde que libera el scale queda sobre
+     el gradiente oscuro de fondo y no se nota. */
+  object-position: center;
+  transform: scale(0.97);
 }
 
 .embudo-bg-video-processing {
-  transform: translateY(17%);
+  /* Sin translateY(17%): era un ajuste para el video antiguo (CloudFront) y
+     con el video nuevo dejaba una franja vacia arriba. */
+  object-position: center;
 }
 
 .embudo-bg-base {
