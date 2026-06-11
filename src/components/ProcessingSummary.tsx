@@ -35,7 +35,8 @@ const WARNING_SECTIONS = [
   "CONVERSION DE MONEDAS",
   "COSTOS ASOCIADOS",
   "LINEAS OMITIDAS",
-  "RIESGOS"
+  "RIESGOS",
+  "TRAZABILIDAD"
 ] as const;
 
 function groupWarnings(warnings: string[]) {

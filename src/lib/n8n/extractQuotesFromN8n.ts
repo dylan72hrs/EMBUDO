@@ -1,10 +1,17 @@
 import { z } from "zod";
+import { auditQuoteEconomics } from "@/lib/normalize/auditQuoteEconomics";
 import { normalizeProductName } from "@/lib/normalize/normalizeProductName";
 import { detectCurrency } from "@/lib/parser/detectCurrency";
 import { parseMoney } from "@/lib/parser/parseMoney";
 import { isAssociatedCostText } from "@/lib/parser/providers/tableParserUtils";
 import type { AdditionalEvaluationData } from "@/lib/excel/generateComparisonExcel";
-import type { AssociatedCost, Currency, ExtractedQuoteItem, ParsedQuote } from "@/lib/validations/quoteSchemas";
+import type {
+  AssociatedCost,
+  AuditStatus,
+  Currency,
+  ExtractedQuoteItem,
+  ParsedQuote
+} from "@/lib/validations/quoteSchemas";
 
 const DEFAULT_TIMEOUT_MS = 180_000;
 
@@ -36,6 +43,21 @@ type N8nAssociatedCost = {
   amountClp?: string | number | null;
   amountCLP?: string | number | null;
   currency?: string | null;
+};
+
+/**
+ * Salida del nodo LLM auditor OPCIONAL de n8n. Si el workflow no lo tiene,
+ * simplemente no viene y nada cambia (contrato retrocompatible). El auditor
+ * nunca sobreescribe datos: la app solo lo usa para cruzar valores y marcar
+ * revision.
+ */
+type N8nAudit = {
+  auditStatus?: string | null;
+  suspiciousValues?: Array<string | Record<string, unknown>> | null;
+  confirmedNetSubtotal?: string | number | null;
+  confirmedDiscount?: string | number | null;
+  confirmedQuotationNumber?: string | number | null;
+  notes?: string | string[] | null;
 };
 
 export type N8nExtractInput = {
@@ -80,6 +102,7 @@ export type N8nDocumentResponse = {
   associatedCosts: N8nAssociatedCost[];
   items: N8nItem[];
   warnings: string[];
+  audit: N8nAudit | null;
   sourceFileKind: string | null;
   contentLength: number | null;
   error: string | null;
@@ -183,6 +206,20 @@ const N8nAssociatedCostSchema = z
   })
   .passthrough();
 
+const N8nAuditSchema = z
+  .object({
+    auditStatus: z.string().optional().nullable(),
+    suspiciousValues: z
+      .array(z.union([z.string(), z.record(z.unknown())]))
+      .optional()
+      .nullable(),
+    confirmedNetSubtotal: z.union([z.string(), z.number()]).optional().nullable(),
+    confirmedDiscount: z.union([z.string(), z.number()]).optional().nullable(),
+    confirmedQuotationNumber: z.union([z.string(), z.number()]).optional().nullable(),
+    notes: z.union([z.string(), z.array(z.string())]).optional().nullable()
+  })
+  .passthrough();
+
 const N8nDocumentSchema = z
   .object({
     ok: z.boolean().optional().default(true),
@@ -218,6 +255,7 @@ const N8nDocumentSchema = z
     associatedCosts: z.array(N8nAssociatedCostSchema).optional().default([]),
     items: z.array(N8nItemSchema).optional().default([]),
     warnings: z.array(z.string()).optional().default([]),
+    audit: N8nAuditSchema.optional().nullable(),
     sourceFileKind: z.string().optional().nullable(),
     contentLength: z.union([z.string(), z.number()]).optional().nullable(),
     error: z.string().optional().nullable()
@@ -563,16 +601,18 @@ function mapDocumentToQuote(
       continue;
     }
 
+    // El TOTAL NETO explicito de linea es la fuente preferida (regla del area
+    // de compras: respeta descuentos de linea). Nunca se sobreescribe con
+    // P.UNIT x CANT; si difieren, auditQuoteEconomics deriva el unitario
+    // efectivo desde el total y deja la diferencia como descuento trazable.
     let unitPrice: number | null = null;
     let total: number | null = null;
-    if (unitPriceInput !== undefined) {
+    if (unitPriceInput !== undefined && totalInput !== undefined) {
+      unitPrice = unitPriceInput;
+      total = totalInput;
+    } else if (unitPriceInput !== undefined) {
       unitPrice = unitPriceInput;
       total = unitPriceInput * effectiveQuantity;
-      if (totalInput !== undefined && Math.abs(totalInput - total) > 2) {
-        quoteWarnings.push(
-          `${supplierName}: total corregido para ${description} por inconsistencia matematica (P.UNIT x CANT).`
-        );
-      }
     } else if (totalInput !== undefined) {
       total = totalInput;
       unitPrice = effectiveQuantity > 0 ? totalInput / effectiveQuantity : null;
@@ -621,12 +661,67 @@ function mapDocumentToQuote(
     };
   }
 
+  // ── Nodo LLM auditor (opcional): solo cruza valores, nunca sobreescribe ──
+  const audit = document.audit;
+  const auditStatusText = normalizeText(safeText(audit?.auditStatus) ?? "");
+  const auditStatus: AuditStatus | undefined =
+    auditStatusText === "approved"
+      ? "approved"
+      : auditStatusText === "needs_review"
+        ? "needs_review"
+        : auditStatusText === "reject"
+          ? "reject"
+          : undefined;
+  const auditConfirmedNetSubtotal = parsePositiveNumber(audit?.confirmedNetSubtotal);
+  const auditConfirmedFolio =
+    safeText(audit?.confirmedQuotationNumber) ??
+    (typeof audit?.confirmedQuotationNumber === "number"
+      ? String(audit.confirmedQuotationNumber)
+      : undefined);
+  const extractedQuoteNumber = safeText(document.documentNumber);
+  const quoteNumber = extractedQuoteNumber ?? auditConfirmedFolio;
+
+  if (audit) {
+    if (!extractedQuoteNumber && auditConfirmedFolio) {
+      quoteWarnings.push(
+        `[TRAZABILIDAD] ${supplierName}: numero de cotizacion ${auditConfirmedFolio} confirmado por el auditor LLM (el extractor no lo entrego).`
+      );
+    }
+    if (auditStatus === "needs_review" || auditStatus === "reject") {
+      quoteWarnings.push(
+        `[RIESGOS] ${supplierName}: el auditor LLM marco esta cotizacion como "${auditStatus}"; requiere revision manual antes de adjudicar.`
+      );
+    }
+    const suspicious = (audit.suspiciousValues ?? [])
+      .map((value) => (typeof value === "string" ? value : JSON.stringify(value)))
+      .filter((value) => value.length > 0)
+      .slice(0, 5);
+    if (suspicious.length > 0) {
+      quoteWarnings.push(
+        `[RIESGOS] ${supplierName}: auditor LLM reporta valores sospechosos: ${suspicious.join("; ")}. Requiere revision manual.`
+      );
+    }
+    const notes = (Array.isArray(audit.notes) ? audit.notes : audit.notes ? [audit.notes] : [])
+      .map((note) => note.trim())
+      .filter(Boolean)
+      .slice(0, 3);
+    for (const note of notes) {
+      quoteWarnings.push(`[TRAZABILIDAD] ${supplierName}: auditor LLM: ${note}`);
+    }
+    const confirmedDiscount = parsePositiveNumber(audit.confirmedDiscount);
+    if (confirmedDiscount !== undefined) {
+      quoteWarnings.push(
+        `[TRAZABILIDAD] ${supplierName}: auditor LLM confirma un descuento de ${confirmedDiscount}; el validador lo cruza contra las lineas, no lo aplica a ciegas.`
+      );
+    }
+  }
+
   const parsedQuote: ParsedQuote = {
     supplierName,
     supplierRut,
     extractionSource: "n8n",
     currency: documentCurrency,
-    quoteNumber: safeText(document.documentNumber) ?? undefined,
+    quoteNumber,
     quoteDate: safeText(document.documentDate) ?? undefined,
     subtotal: parseNonNegativeNumber(document.subtotal),
     tax: parseNonNegativeNumber(document.tax),
@@ -643,15 +738,22 @@ function mapDocumentToQuote(
     deliveryTime: safeText(document.deliveryTime),
     pricesIncludeVat: false,
     items: validItems,
-    warnings: quoteWarnings
+    warnings: quoteWarnings,
+    auditStatus,
+    auditConfirmedNetSubtotal,
+    needsReview: auditStatus === "needs_review" || auditStatus === "reject" ? true : undefined
   };
+
+  // Auditoria economica app-side: neto sin IVA, descuentos, medidas-vs-precio,
+  // valueBasis por linea y trazabilidad. Es el validador final.
+  const auditedQuote = auditQuoteEconomics(parsedQuote);
 
   return {
     fileName,
     detectedType,
     status: "processed",
-    parsedQuote,
-    warnings: quoteWarnings,
+    parsedQuote: auditedQuote,
+    warnings: auditedQuote.warnings,
     reason: "Cotizacion valida procesada correctamente.",
     action: "Sin accion requerida.",
     missing: []
@@ -701,6 +803,7 @@ function mapN8nDocument(document: z.infer<typeof N8nDocumentSchema>): N8nDocumen
     associatedCosts: document.associatedCosts as N8nAssociatedCost[],
     items: document.items as N8nItem[],
     warnings: document.warnings,
+    audit: (document.audit ?? null) as N8nAudit | null,
     sourceFileKind: safeText(document.sourceFileKind) ?? null,
     contentLength: parseSummaryValue(document.contentLength),
     error: safeText(document.error) ?? null

@@ -9,6 +9,8 @@ export type SupplierRecommendation = "Mejor oferta" | "Comparable" | "Revisar" |
 
 export type AnalyticsSupplier = {
   name: string;
+  /** Numero de cotizacion/folio del PDF del proveedor (trazabilidad). */
+  quotationNumber: string | null;
   /** Total neto CLP comparable: la misma suma item por item que la fila TOTAL del Excel. */
   total: number;
   itemsQuoted: number;
@@ -203,7 +205,9 @@ export function countSuppliersNeedingReview(
 ): number {
   const warnings = [...consolidated.warnings, ...extraWarnings];
   return consolidated.suppliers.filter(
-    (supplier) => isRealSupplierName(supplier.name) && supplierNeedsReview(supplier.name, warnings)
+    (supplier) =>
+      isRealSupplierName(supplier.name) &&
+      (supplier.needsReview === true || supplierNeedsReview(supplier.name, warnings))
   ).length;
 }
 
@@ -254,10 +258,13 @@ export function buildPurchaseAnalytics(
   const totalEvaluatedClp = ranked.reduce((sum, supplier) => sum + supplier.total, 0);
 
   const suppliers: AnalyticsSupplier[] = ranked.map((supplier) => {
-    const needsReview = supplierNeedsReview(supplier.name, warnings);
+    const summary = consolidated.suppliers.find((entry) => entry.name === supplier.name);
+    const needsReview =
+      supplierNeedsReview(supplier.name, warnings) || summary?.needsReview === true;
     const isBest = best !== undefined && supplier.name === best.name;
     return {
       name: supplier.name,
+      quotationNumber: summary?.quoteNumber ?? null,
       total: supplier.total,
       itemsQuoted: supplier.itemsQuoted,
       share: totalEvaluatedClp > 0 ? (supplier.total / totalEvaluatedClp) * 100 : 0,

@@ -37,6 +37,7 @@ export type DashboardOptions = {
 
 type SupplierStat = {
   name: string;
+  quoteNumber: string | null;
   total: number;
   itemsQuoted: number;
   share: number;
@@ -112,7 +113,9 @@ function buildDashboardStats(data: ConsolidatedComparison): DashboardStats {
   const totalEvaluated = real.reduce((sum, supplier) => sum + supplier.total, 0);
 
   const stats: SupplierStat[] = real.map((supplier) => {
-    const needsReview = supplierNeedsReview(supplier.name, data.warnings);
+    const summary = data.suppliers.find((entry) => entry.name === supplier.name);
+    const needsReview =
+      supplierNeedsReview(supplier.name, data.warnings) || summary?.needsReview === true;
     const warningsCount = supplierWarningsCount(supplier.name, data.warnings);
     const isBest = supplier.name === best.name;
     const entry = {
@@ -124,6 +127,7 @@ function buildDashboardStats(data: ConsolidatedComparison): DashboardStats {
 
     return {
       name: supplier.name,
+      quoteNumber: summary?.quoteNumber ?? null,
       total: supplier.total,
       itemsQuoted: supplier.itemsQuoted,
       share: totalEvaluated > 0 ? (supplier.total / totalEvaluated) * 100 : 0,
@@ -159,7 +163,8 @@ const DASHBOARD_DATA_HEADERS = [
   "WarningCount",
   "Recommendation",
   "RiskLevel",
-  "Score"
+  "Score",
+  "QuotationNumber"
 ] as const;
 
 /**
@@ -207,7 +212,8 @@ export function writeDashboardData(
       stat.warningsCount,
       stat.recommendation,
       stat.riskLevel,
-      stat.score
+      stat.score,
+      stat.quoteNumber ?? ""
     ];
   }
 
@@ -596,6 +602,43 @@ export function writeDashboardPanel(
       fontSize: 8,
       align: "left",
     });
+    row += 1;
+  }
+  row += 1;
+
+  // ── Trazabilidad por cotizacion (folio -> valor neto usado) ─────────────
+  mergedTextRow(worksheet, row, colStart, colEnd, "TRAZABILIDAD POR COTIZACIÓN", {
+    bgArgb: C.headerBg,
+    fgArgb: C.headerFg,
+    fontSize: 9,
+  });
+  row += 1;
+  mergedTextRow(
+    worksheet,
+    row,
+    colStart,
+    colEnd,
+    "Base de adjudicación: suma de líneas NETAS sin IVA, descuentos del PDF aplicados antes de comparar.",
+    { bgArgb: C.cardBg, fgArgb: C.cardLabel, bold: false, fontSize: 8, align: "left" }
+  );
+  row += 1;
+  for (const stat of stats) {
+    mergedTextRow(
+      worksheet,
+      row,
+      colStart,
+      colEnd,
+      `${stat.name} — Cotización N° ${stat.quoteNumber ?? "s/n"} — Valor neto usado: ${formatClp(
+        Math.round(stat.total)
+      )}${stat.needsReview ? " — Requiere revisión" : ""}`,
+      {
+        bgArgb: stat.needsReview ? C.reviewBg : C.valueBg,
+        fgArgb: stat.needsReview ? C.reviewFg : C.neutralFg,
+        bold: false,
+        fontSize: 8,
+        align: "left",
+      }
+    );
     row += 1;
   }
   row += 1;

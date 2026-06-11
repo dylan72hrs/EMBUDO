@@ -2,6 +2,18 @@ import { z } from "zod";
 
 export const CurrencySchema = z.enum(["USD", "CLP", "UNKNOWN"]);
 
+/** Justificacion de la cifra neta usada para comparar (trazabilidad por item). */
+export const ValueBasisSchema = z.enum([
+  "line_net",
+  "subtotal_net",
+  "discounted_line",
+  "calculated_from_qty_unit",
+  "manual_review",
+  "inferred"
+]);
+
+export const AuditStatusSchema = z.enum(["approved", "needs_review", "reject"]);
+
 export const ExtractedQuoteItemSchema = z.object({
   sourceItem: z.union([z.string(), z.number()]).optional(),
   description: z.string().min(1),
@@ -28,7 +40,12 @@ export const ExtractedQuoteItemSchema = z.object({
   omissionReason: z.string().optional(),
   extractionMethod: z.string().optional(),
   originalTotal: z.number().nonnegative().nullable().optional(),
-  confidence: z.number().min(0).max(1).default(0.5)
+  confidence: z.number().min(0).max(1).default(0.5),
+  // Trazabilidad economica (opcional, no rompe el contrato con n8n)
+  valueBasis: ValueBasisSchema.optional(),
+  sourceValueRaw: z.string().optional(),
+  netValueUsed: z.number().nonnegative().optional(),
+  discountApplied: z.number().nonnegative().optional()
 });
 
 export const AssociatedCostSchema = z.object({
@@ -62,11 +79,17 @@ export const ParsedQuoteSchema = z.object({
   deliveryTime: z.string().optional(),
   pricesIncludeVat: z.boolean().default(false),
   items: z.array(ExtractedQuoteItemSchema),
-  warnings: z.array(z.string()).default([])
+  warnings: z.array(z.string()).default([]),
+  // Auditoria economica (opcional, app-side y/o nodo LLM auditor de n8n)
+  needsReview: z.boolean().optional(),
+  auditStatus: AuditStatusSchema.optional(),
+  auditConfirmedNetSubtotal: z.number().nonnegative().optional(),
+  globalDiscountApplied: z.number().nonnegative().optional()
 });
 
 export const SupplierSummarySchema = z.object({
   name: z.string(),
+  quoteNumber: z.string().optional(),
   paymentCondition: z.string().optional(),
   deliveryTime: z.string().optional(),
   credit: z.string().optional(),
@@ -74,7 +97,8 @@ export const SupplierSummarySchema = z.object({
   offerNetTotalCLP: z.number().nonnegative().nullable().optional(),
   offerGrossTotalCLP: z.number().nonnegative().nullable().optional(),
   totalsSource: z.string().optional(),
-  totalsEstimated: z.boolean().optional()
+  totalsEstimated: z.boolean().optional(),
+  needsReview: z.boolean().optional()
 });
 
 export const SupplierOfferSchema = z.object({
@@ -128,6 +152,8 @@ export const ConsolidatedComparisonSchema = z.object({
 });
 
 export type Currency = z.infer<typeof CurrencySchema>;
+export type ValueBasis = z.infer<typeof ValueBasisSchema>;
+export type AuditStatus = z.infer<typeof AuditStatusSchema>;
 export type AssociatedCost = z.infer<typeof AssociatedCostSchema>;
 export type ExtractedQuoteItem = z.infer<typeof ExtractedQuoteItemSchema>;
 export type ParsedQuote = z.infer<typeof ParsedQuoteSchema>;

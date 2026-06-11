@@ -24,7 +24,7 @@ const SUPPLIER_ORDER = ["Echave Turri", "ADIS", "Tecno Mercado"];
 const COST_KEYWORDS =
   "(?:cobro log[ií]stico|log[ií]stica|logistico|logistica|flete|despacho|env[ií]o|transporte|cargo despacho|cargo por despacho|costo despacho|costo de env[ií]o|costos de env[ií]o|servicio de entrega|delivery|shipping|freight|handling)";
 const NON_PRODUCT_PATTERN = new RegExp(
-  `\\b(${COST_KEYWORDS}|subtotal|total neto|total general|iva|ila|condici[oó]n de pago|observaciones?)\\b`,
+  `\\b(${COST_KEYWORDS}|subtotal|total neto|total general|total bruto|valor bruto|monto total|iva|ila|impuesto|condici[oó]n de pago|observaciones?)\\b`,
   "i"
 );
 const ASSOCIATED_COST_PATTERN = new RegExp(`\\b${COST_KEYWORDS}\\b`, "i");
@@ -179,13 +179,15 @@ function createSupplierSummaries(quotes: ParsedQuote[], target: Currency, exchan
     const economicTotals = calculateQuoteEconomicTotals(quote, exchangeRateValue);
     supplierMap.set(quote.supplierName, {
       name: quote.supplierName,
+      quoteNumber: quote.quoteNumber,
       paymentCondition: quote.paymentCondition,
       deliveryTime: quote.deliveryTime,
       associatedCosts: associatedCosts.total > 0 ? String(Math.round(associatedCosts.total)) : undefined,
       offerNetTotalCLP: economicTotals.offerNetTotalCLP,
       offerGrossTotalCLP: economicTotals.offerGrossTotalCLP,
       totalsSource: economicTotals.totalsSource,
-      totalsEstimated: economicTotals.estimated
+      totalsEstimated: economicTotals.estimated,
+      needsReview: quote.needsReview === true ? true : undefined
     });
   }
 

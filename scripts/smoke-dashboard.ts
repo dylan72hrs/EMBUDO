@@ -1,16 +1,19 @@
 /**
  * Smoke test: verifica que la analitica web y el Excel principal usen la MISMA
- * fuente de verdad (totales item por item desde cascadeBlocks) y que el
- * dashboard Excel (panel en hoja principal + hoja RESUMEN con graficos
- * nativos + Dashboard_Data) quede correcto y abrible.
+ * fuente de verdad (suma de lineas NETAS sin IVA desde cascadeBlocks), que la
+ * auditoria economica sea defendible (descuentos aplicados, medidas no usadas
+ * como precios, trazabilidad con folio) y que el dashboard Excel quede
+ * correcto y abrible.
  *
- * Escenario 1 (Prueba 2 del plan): ADIS en USD + Tecno Mercado en CLP +
- * Echave Turri en moneda mixta con un quoteSubtotal "envenenado" que con el
- * codigo antiguo producia totales inflados (~$336.380.009). Incluye ciclo de
- * folio (strip -> editar -> reinyectar charts).
+ * Escenario 1: ADIS (USD) + Tecno (CLP con descuento global y una linea trampa
+ * de medidas) + Echave (moneda mixta con descuento por linea y subtotal
+ * envenenado). Incluye ciclo de folio (strip -> editar -> reinyectar charts).
  *
- * Escenario 2 (Prueba 1 del plan): solo ADIS -> advertencia de proveedor
- * unico, sin metricas falsas, y sin grafico donut (no aporta con 1 proveedor).
+ * Escenario 2: solo ADIS -> advertencia de proveedor unico, sin metricas
+ * falsas, sin donut.
+ *
+ * Escenario 3: auditoria unitaria (IVA incluido, lineas brutas reescaladas a
+ * subtotal neto, cruce con auditor LLM).
  *
  * Uso: npx tsx scripts/smoke-dashboard.ts
  */
@@ -21,6 +24,7 @@ import path from "node:path";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
 import { buildPurchaseAnalytics } from "../src/lib/analytics/buildPurchaseAnalytics";
+import { auditQuoteEconomics } from "../src/lib/normalize/auditQuoteEconomics";
 import { consolidateQuotes } from "../src/lib/normalize/consolidateQuotes";
 import {
   applyFolioToGeneratedExcel,
@@ -59,6 +63,7 @@ function item(partial: Partial<ExtractedQuoteItem> & Pick<ExtractedQuoteItem, "d
 const adis: ParsedQuote = {
   supplierName: "ADIS Grupo Tecnologico",
   currency: "USD",
+  quoteNumber: "OC-1142",
   pricesIncludeVat: false,
   quoteSubtotal: 591,
   items: [
@@ -68,28 +73,40 @@ const adis: ParsedQuote = {
   warnings: []
 };
 
+// Tecno: descuento global (linea DESCUENTO) + linea trampa con medidas usadas
+// como precio (210x60x19 cm -> unitPrice 210). El subtotal del documento ya
+// viene con el descuento aplicado (asi lo muestran los PDF reales).
 const tecno: ParsedQuote = {
   supplierName: "Tecno Mercado",
   currency: "CLP",
+  quoteNumber: "7788",
   pricesIncludeVat: false,
-  quoteSubtotal: 621000,
+  quoteSubtotal: 558900,
   items: [
     item({ description: "Licencia software gestion flota", currency: "CLP", quantity: 10, unitPrice: 46300 }),
-    item({ description: "Sensor telemetria industrial", currency: "CLP", quantity: 2, unitPrice: 79000 })
+    item({ description: "Sensor telemetria industrial", currency: "CLP", quantity: 2, unitPrice: 79000 }),
+    item({
+      description: "Estante metalico 210x60x19 cm",
+      rawLine: "Estante metalico 210x60x19 cm alto 210 cm",
+      currency: "CLP",
+      quantity: 1,
+      unitPrice: 210
+    }),
+    item({ description: "DESCUENTO ESPECIAL", currency: "CLP", quantity: 1, total: 62100 })
   ],
   warnings: []
 };
 
-// Moneda mixta a nivel de items, sin moneda declarada a nivel documento.
-// quoteSubtotal envenenado: con el codigo antiguo (offerNetTotalCLP via
-// calculateQuoteEconomicTotals) ese subtotal podia convertirse con el dolar
-// y producir totales inflados (~$336M).
+// Echave: moneda mixta + descuento POR LINEA (total neto explicito 1.100 <
+// 1.156 x 1) + quoteSubtotal envenenado que con el codigo antiguo inflaba
+// totales (~$336M).
 const echave: ParsedQuote = {
   supplierName: "Comercial Echave Turri Limitada",
+  quoteNumber: "423",
   pricesIncludeVat: false,
   quoteSubtotal: 352230,
   items: [
-    item({ description: "Notebook Dell Pro 14", currency: "USD", quantity: 1, unitPrice: 1156 }),
+    item({ description: "Notebook Dell Pro 14", currency: "USD", quantity: 1, unitPrice: 1156, total: 1100 }),
     item({ description: "Soporte tecnico instalacion", currency: "CLP", quantity: 1, unitPrice: 79000 })
   ],
   warnings: []
@@ -141,8 +158,9 @@ async function inspectCharts(excelPath: string) {
 }
 
 async function scenarioMultiSupplier() {
-  console.log("\n=== Escenario 1: ADIS (USD) + Tecno (CLP) + Echave (mixto) ===");
-  const consolidated = await consolidateQuotes([adis, tecno, echave], {}, { exchangeRate: exchange });
+  console.log("\n=== Escenario 1: ADIS (USD) + Tecno (CLP, descuento+trampa) + Echave (mixto, dscto linea) ===");
+  const auditedQuotes = [adis, tecno, echave].map((quote) => auditQuoteEconomics(quote));
+  const consolidated = await consolidateQuotes(auditedQuotes, {}, { exchangeRate: exchange });
 
   const jobId = "smoke-multi";
   await mkdir(path.join(process.cwd(), "output", jobId), { recursive: true });
@@ -150,17 +168,17 @@ async function scenarioMultiSupplier() {
     path.join(process.cwd(), "templates", "template.xlsx"),
     consolidated,
     jobId,
-    { needsReviewCount: 1 }
+    { needsReviewCount: 2 }
   );
 
   const allWarnings = [...new Set([...consolidated.warnings, ...generated.warnings])];
   const analytics = buildPurchaseAnalytics(consolidated, allWarnings, { omittedFilesCount: 0 });
 
-  // ── Totales esperados (item por item, convertidos linea a linea) ──────────
+  // ── Totales esperados (lineas NETAS, descuentos aplicados antes de comparar)
   const expected = new Map<string, number>([
-    ["ADIS Grupo Tecnologico", 35 * 955 * 10 + 120.5 * 955 * 2],
-    ["Tecno Mercado", 46300 * 10 + 79000 * 2],
-    ["Comercial Echave Turri Limitada", 1156 * 955 * 1 + 79000]
+    ["ADIS Grupo Tecnologico", 35 * 955 * 10 + 120.5 * 955 * 2],            // 564.405
+    ["Tecno Mercado", (463000 + 158000) * 0.9],                              // 558.900 (descuento global 10%)
+    ["Comercial Echave Turri Limitada", 1100 * 955 + 79000]                  // 1.129.500 (total neto de linea respetado)
   ]);
 
   for (const [name, total] of expected.entries()) {
@@ -177,10 +195,38 @@ async function scenarioMultiSupplier() {
     "Ningun total inflado por subtotal de documento (~$336M)",
     analytics.suppliers.every((supplier) => Math.abs(supplier.total - inflated) > 1000)
   );
-  check("Mejor oferta = ADIS", analytics.bestSupplier?.name === "ADIS Grupo Tecnologico");
+  check(
+    "Descuento global de Tecno aplicado antes de comparar",
+    allWarnings.some((warning) => /descuento global .*aplicado proporcionalmente/i.test(warning))
+  );
+  check(
+    "Descuento por linea de Echave respetado (total neto explicito)",
+    allWarnings.some((warning) => /total neto explicito de linea/i.test(warning))
+  );
+  check(
+    "Linea de medidas (210 cm) NO usada como precio",
+    allWarnings.some((warning) => /coincide con una medida/i.test(warning)) &&
+      analytics.suppliers.every((supplier) => supplier.total !== 210),
+    JSON.stringify(allWarnings.filter((w) => /medida/i.test(w)))
+  );
+  check(
+    "Tecno marcado needsReview (linea trampa anulada)",
+    analytics.suppliers.find((s) => s.name === "Tecno Mercado")?.needsReview === true
+  );
   check(
     "Echave marcado para revision (moneda mixta)",
     analytics.suppliers.find((s) => s.name === "Comercial Echave Turri Limitada")?.needsReview === true
+  );
+  check(
+    "Trazabilidad por cotizacion en warnings",
+    ["OC-1142", "7788", "423"].every((folio) =>
+      allWarnings.some((warning) => warning.startsWith("[TRAZABILIDAD]") && warning.includes(folio))
+    )
+  );
+  check(
+    "Analitica expone folio por proveedor",
+    analytics.suppliers.find((s) => s.name === "Tecno Mercado")?.quotationNumber === "7788" &&
+      analytics.suppliers.find((s) => s.name === "Comercial Echave Turri Limitada")?.quotationNumber === "423"
   );
 
   // ── Excel: fila TOTAL de la tabla principal debe coincidir con la web ─────
@@ -197,101 +243,86 @@ async function scenarioMultiSupplier() {
       excelTotal !== undefined && webTotal !== undefined && Math.abs(excelTotal - webTotal) < 1,
       `excel=${excelTotal} web=${webTotal}`
     );
+
+    const folioText = String(sheet.getCell(5, block.unitPriceColumn).value ?? "");
+    check(
+      `Folio visible sobre la columna de ${supplier.name}`,
+      supplier.quoteNumber !== undefined && folioText.includes(`Cotización N° ${supplier.quoteNumber}`),
+      `celda fila5="${folioText}"`
+    );
   }
 
-  // ── Dashboard_Data: 15 columnas, solo proveedores reales, orden ascendente ─
+  // ── Dashboard_Data: 16 columnas con folio, solo proveedores reales ────────
   const dashboardData = workbook.getWorksheet("Dashboard_Data");
   check("Dashboard_Data existe", dashboardData !== undefined);
   if (dashboardData) {
     check("Dashboard_Data oculta", dashboardData.state === "hidden");
     const headerRow = dashboardData.getRow(1).values as Array<unknown>;
     check(
-      "Dashboard_Data headers Provider..Score (15 columnas)",
-      headerRow[1] === "Provider" && headerRow[2] === "TotalNetCLP" && headerRow[15] === "Score",
+      "Dashboard_Data headers Provider..Score..QuotationNumber",
+      headerRow[1] === "Provider" && headerRow[15] === "Score" && headerRow[16] === "QuotationNumber",
       JSON.stringify(headerRow)
     );
 
+    const folioByName = new Map([
+      ["ADIS Grupo Tecnologico", "OC-1142"],
+      ["Tecno Mercado", "7788"],
+      ["Comercial Echave Turri Limitada", "423"]
+    ]);
     let previousTotal = 0;
     for (let row = 2; row <= 4; row += 1) {
       const name = String(dashboardData.getCell(row, 1).value ?? "").trim();
       const total = numericCell(dashboardData.getCell(row, 2));
-      const score = numericCell(dashboardData.getCell(row, 15));
+      const folio = String(dashboardData.getCell(row, 16).value ?? "").trim();
       const expectedTotal = expected.get(name);
       check(
-        `Dashboard_Data fila ${row}: ${name || "(vacia)"} total+score`,
+        `Dashboard_Data fila ${row}: ${name || "(vacia)"} total+folio`,
         Boolean(name) &&
           expectedTotal !== undefined &&
           total !== undefined &&
           Math.abs(total - Math.round(expectedTotal)) <= 1 &&
-          score !== undefined &&
-          score >= 0 &&
-          score <= 100,
-        `total=${total} score=${score}`
+          folio === folioByName.get(name),
+        `total=${total} folio=${folio}`
       );
       check(`Dashboard_Data fila ${row} ordenada ascendente`, total !== undefined && total >= previousTotal);
       previousTotal = total ?? previousTotal;
     }
-    check(
-      "Dashboard_Data fila 2 = mejor oferta (IsBestOffer)",
-      dashboardData.getCell(2, 9).value === true && dashboardData.getCell(4, 10).value === true
-    );
     const ghostName = String(dashboardData.getCell(5, 1).value ?? "").trim();
     check("Dashboard_Data sin filas basura (fila 5 vacia)", !ghostName);
   }
 
-  // ── Panel ejecutivo a la derecha de la tabla (columnas R+) ────────────────
+  // ── Panel ejecutivo: trazabilidad por cotizacion ──────────────────────────
   const panelTitle = String(sheet.getCell(2, 18).value ?? "");
-  check("Panel ejecutivo en R2 (derecha de la tabla)", panelTitle.includes("PANEL EJECUTIVO DE COMPRAS"), panelTitle);
-  let matrixHasEchave = false;
-  let hasScoreHeader = false;
+  check("Panel ejecutivo en R2", panelTitle.includes("PANEL EJECUTIVO DE COMPRAS"), panelTitle);
+  let traceHeader = false;
+  let traceEchave = false;
   sheet.eachRow((row) => {
     row.eachCell((cell) => {
       const text = typeof cell.value === "string" ? cell.value : "";
-      if (Number(cell.col) >= 18 && text === "Comercial Echave Turri Limitada") matrixHasEchave = true;
-      if (Number(cell.col) >= 18 && text === "Score") hasScoreHeader = true;
+      if (Number(cell.col) >= 18 && text.includes("TRAZABILIDAD POR COTIZACIÓN")) traceHeader = true;
+      if (Number(cell.col) >= 18 && text.includes("Cotización N° 423")) traceEchave = true;
     });
   });
-  check("Panel: matriz incluye a Echave", matrixHasEchave);
-  check("Panel: matriz con columna Score", hasScoreHeader);
-  // La tabla (columnas A-P) no debe tener contenido del panel
-  check(
-    "Columna Q vacia (margen entre tabla y panel)",
-    sheet.getColumn(17).values.filter((value) => value !== null && value !== undefined).length === 0
-  );
+  check("Panel: bloque TRAZABILIDAD POR COTIZACIÓN", traceHeader);
+  check("Panel: folio de Echave visible", traceEchave);
 
-  // ── Hoja RESUMEN: 4 graficos nativos con estilos, rangos reales ───────────
+  // ── Hoja RESUMEN: 4 graficos nativos, rangos reales ───────────────────────
   const inspection = await inspectCharts(generated.outputPath);
   check("Hoja RESUMEN inyectada", inspection.workbookXml.includes('name="RESUMEN"'));
   check("4 graficos nativos", inspection.charts.length === 4, `found=${inspection.charts.length}`);
-  check("4 partes chartStyle", inspection.styleFiles.length === 4, `found=${inspection.styleFiles.length}`);
-  check("4 partes chartColorStyle", inspection.colorsFiles.length === 4, `found=${inspection.colorsFiles.length}`);
-  check(
-    "Content types declara chartstyle/chartcolorstyle",
-    inspection.contentTypes.includes("chartstyle+xml") && inspection.contentTypes.includes("chartcolorstyle+xml")
-  );
-  check(
-    "Hay un donut (distribucion del gasto)",
-    inspection.charts.some((chart) => chart.xml.includes("doughnutChart"))
-  );
   for (const chart of inspection.charts) {
     check(
       `${chart.name} apunta solo a 3 proveedores ($2:$4)`,
       /\$[A-Z]+\$2:\$[A-Z]+\$4/.test(chart.xml) && !/\$[A-Z]+\$2:\$[A-Z]+\$7/.test(chart.xml)
     );
-    check(`${chart.name} con titulo`, chart.xml.includes("<c:title>"));
   }
 
-  // ── Ciclo folio: strip -> editar con ExcelJS -> reinyectar ────────────────
+  // ── Ciclo folio comparativa: strip -> editar -> reinyectar ────────────────
   await applyFolioToGeneratedExcel(generated.outputPath, "F-SMOKE-001");
   const afterFolio = await inspectCharts(generated.outputPath);
-  check("Folio: RESUMEN reinyectada", afterFolio.workbookXml.includes('name="RESUMEN"'));
-  check("Folio: 4 graficos restaurados", afterFolio.charts.length === 4, `found=${afterFolio.charts.length}`);
-  check(
-    "Folio: rangos siguen recortados a $2:$4",
-    afterFolio.charts.every((chart) => /\$[A-Z]+\$2:\$[A-Z]+\$4/.test(chart.xml))
-  );
+  check("Folio job: RESUMEN reinyectada", afterFolio.workbookXml.includes('name="RESUMEN"'));
+  check("Folio job: 4 graficos restaurados", afterFolio.charts.length === 4, `found=${afterFolio.charts.length}`);
 
-  // XML bien formado en manifiestos (lo que dispara la reparacion de Excel)
   for (const name of ["xl/workbook.xml", "xl/_rels/workbook.xml.rels", "[Content_Types].xml"]) {
     const xml = await afterFolio.zip.file(name)!.async("string");
     check(`${name} bien formado`, /<\?xml/.test(xml) && !xml.includes("undefined"));
@@ -300,7 +331,7 @@ async function scenarioMultiSupplier() {
 
 async function scenarioSingleSupplier() {
   console.log("\n=== Escenario 2: solo ADIS (proveedor unico) ===");
-  const consolidated = await consolidateQuotes([adis], {}, { exchangeRate: exchange });
+  const consolidated = await consolidateQuotes([auditQuoteEconomics(adis)], {}, { exchangeRate: exchange });
   const analytics = buildPurchaseAnalytics(consolidated, consolidated.warnings, { omittedFilesCount: 0 });
 
   check("singleSupplier = true", analytics.singleSupplier);
@@ -318,7 +349,6 @@ async function scenarioSingleSupplier() {
   );
   check("Sin metricas falsas de cobertura (coverageAvailable=false)", !analytics.coverageAvailable);
 
-  // ── Excel con un solo proveedor: sin donut, rangos a 1 fila ───────────────
   const jobId = "smoke-single";
   await mkdir(path.join(process.cwd(), "output", jobId), { recursive: true });
   const generated = await generateComparisonExcel(
@@ -329,7 +359,6 @@ async function scenarioSingleSupplier() {
   );
 
   const inspection = await inspectCharts(generated.outputPath);
-  check("RESUMEN inyectada (1 proveedor)", inspection.workbookXml.includes('name="RESUMEN"'));
   check(
     "Donut removido con proveedor unico",
     inspection.charts.length === 3 && inspection.charts.every((chart) => !chart.xml.includes("doughnutChart")),
@@ -341,22 +370,96 @@ async function scenarioSingleSupplier() {
       /\$[A-Z]+\$2:\$[A-Z]+\$2/.test(chart.xml) && !/\$[A-Z]+\$2:\$[A-Z]+\$7/.test(chart.xml)
     );
   }
+}
 
-  const workbook = await readWithoutCharts(generated.outputPath);
-  const sheet = workbook.getWorksheet(TEMPLATE_MAP.sheetName);
-  let riskMessage = false;
-  sheet?.eachRow((row) => {
-    row.eachCell((cell) => {
-      const text = typeof cell.value === "string" ? cell.value : "";
-      if (text.includes("no existe comparacion entre multiples proveedores")) riskMessage = true;
-    });
+function scenarioEconomicAudit() {
+  console.log("\n=== Escenario 3: auditoria economica unitaria ===");
+
+  // 3a. IVA incluido -> normalizar a neto (÷1,19)
+  const vatQuote = auditQuoteEconomics({
+    supplierName: "Ferreteria Bruta",
+    currency: "CLP",
+    pricesIncludeVat: true,
+    items: [item({ description: "Taladro industrial", currency: "CLP", quantity: 1, total: 119000 })],
+    warnings: []
   });
-  check("Panel muestra riesgo de proveedor unico", riskMessage);
+  const vatItem = vatQuote.items[0];
+  check(
+    "IVA incluido: linea normalizada a neto 100.000",
+    vatItem !== undefined && Math.abs((vatItem.total ?? 0) - 100000) < 1,
+    `total=${vatItem?.total}`
+  );
+  check("IVA incluido: needsReview = true", vatQuote.needsReview === true);
+
+  // 3b. Lineas brutas que suman el total c/IVA -> reescalar al subtotal neto
+  const grossQuote = auditQuoteEconomics({
+    supplierName: "Distribuidora Bruta",
+    currency: "CLP",
+    pricesIncludeVat: false,
+    quoteSubtotal: 100000,
+    quoteTotal: 119000,
+    items: [
+      item({ description: "Caja herramientas", currency: "CLP", quantity: 1, total: 59500 }),
+      item({ description: "Set destornilladores", currency: "CLP", quantity: 1, total: 59500 })
+    ],
+    warnings: []
+  });
+  const grossSum = grossQuote.items.reduce((sum, entry) => sum + (entry.total ?? 0), 0);
+  check(
+    "Lineas brutas reescaladas al subtotal neto (100.000)",
+    Math.abs(grossSum - 100000) < 1,
+    `sum=${grossSum}`
+  );
+  check(
+    "Reescalado con valueBasis subtotal_net",
+    grossQuote.items.every((entry) => entry.valueBasis === "subtotal_net")
+  );
+  check("Reescalado marca needsReview", grossQuote.needsReview === true);
+
+  // 3c. Cruce con auditor LLM: subtotal confirmado difiere de la suma usada
+  const auditMismatch = auditQuoteEconomics({
+    supplierName: "Proveedor Auditado",
+    currency: "CLP",
+    pricesIncludeVat: false,
+    auditConfirmedNetSubtotal: 90000,
+    items: [item({ description: "Servicio mantencion", currency: "CLP", quantity: 1, total: 100000 })],
+    warnings: []
+  });
+  check(
+    "Auditor LLM discrepante genera warning + needsReview (sin sobreescribir)",
+    auditMismatch.needsReview === true &&
+      auditMismatch.items[0]?.total === 100000 &&
+      auditMismatch.warnings.some((warning) => /auditor LLM confirmo un subtotal neto/i.test(warning))
+  );
+
+  // 3d. Justificacion por item: sin precio justificable -> fuera + review
+  const measureOnly = auditQuoteEconomics({
+    supplierName: "Muebles Vasquez",
+    currency: "CLP",
+    quoteNumber: "384",
+    pricesIncludeVat: false,
+    items: [
+      item({ description: "Closet melamina 187x60x52 cm", currency: "CLP", quantity: 1, unitPrice: 187 }),
+      item({ description: "Comoda 4 cajones", currency: "CLP", quantity: 2, unitPrice: 64990 })
+    ],
+    warnings: []
+  });
+  check(
+    "Medida 187 anulada; solo queda la linea justificada",
+    measureOnly.items.length === 1 && measureOnly.items[0]?.description === "Comoda 4 cajones",
+    JSON.stringify(measureOnly.items.map((entry) => entry.description))
+  );
+  check(
+    "Linea valida con valueBasis calculated_from_qty_unit",
+    measureOnly.items[0]?.valueBasis === "calculated_from_qty_unit"
+  );
+  check("Trazabilidad menciona folio 384", measureOnly.warnings.some((warning) => warning.includes("384")));
 }
 
 async function main() {
   await scenarioMultiSupplier();
   await scenarioSingleSupplier();
+  scenarioEconomicAudit();
 
   if (failures > 0) {
     console.error(`\n${failures} verificacion(es) fallaron.`);

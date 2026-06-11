@@ -674,6 +674,20 @@ export async function generateComparisonExcel(
   for (const [index, supplier] of suppliersToWrite.entries()) {
     const block = TEMPLATE_MAP.supplierBlocks[index];
     worksheet.getCell(block.supplierNameCell).value = supplier.name;
+
+    // Folio/numero de cotizacion sobre cada bloque (fila 5, libre en la
+    // plantilla). Se centra sobre las 2 columnas del bloque SIN crear merges
+    // para no alterar el formato de la plantilla.
+    if (hasText(supplier.quoteNumber)) {
+      const folioCell = worksheet.getCell(5, block.unitPriceColumn);
+      writeDynamicCell(folioCell, `Cotización N° ${supplier.quoteNumber?.trim()}`);
+      folioCell.font = { ...(folioCell.font ?? {}), size: 8, bold: true, italic: true };
+      folioCell.alignment = {
+        ...(folioCell.alignment ?? {}),
+        horizontal: "centerContinuous",
+        vertical: "middle"
+      };
+    }
     writeIfNotFormula(
       worksheet.getCell(shiftedTemplateRow(TEMPLATE_MAP.rows.credit, footerRowOffset), block.unitPriceColumn),
       supplier.credit ?? null

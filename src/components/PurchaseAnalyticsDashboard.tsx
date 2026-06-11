@@ -363,7 +363,14 @@ export function PurchaseAnalyticsDashboard({ analytics, budgetObjective }: Props
           <tbody>
             {suppliers.map((supplier) => (
               <tr key={supplier.name} className="border-b border-white/5 text-white/90">
-                <td className="max-w-[180px] truncate py-2 pr-3 font-medium">{supplier.name}</td>
+                <td className="max-w-[200px] py-2 pr-3 font-medium">
+                  <span className="block truncate">{supplier.name}</span>
+                  {supplier.quotationNumber && (
+                    <span className="block text-[10px] font-normal text-white/55">
+                      Cotización N° {supplier.quotationNumber}
+                    </span>
+                  )}
+                </td>
                 <td className="py-2 pr-3 font-semibold text-white">{formatClp(supplier.total)}</td>
                 <td className="py-2 pr-3">
                   {analytics.coverageAvailable
