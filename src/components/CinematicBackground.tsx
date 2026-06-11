@@ -8,12 +8,9 @@ type Props = {
   mode: BackgroundMode;
 };
 
-const PROCESSING_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4";
-const SUCCESS_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_065045_c44942da-53c6-4804-b734-f9e07fc22e08.mp4";
-const INITIAL_VIDEO_URL =
-  "https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260418_080021_d598092b-c4c2-4e53-8e46-94cf9064cd50.mp4";
+const INITIAL_VIDEO_URL = "/videos/embudo-inicio.mp4";
+const PROCESSING_VIDEO_URL = "/videos/embudo-procesamiento.mp4";
+const SUCCESS_VIDEO_URL = "/videos/embudo-final.mp4";
 
 function modeVideo(mode: BackgroundMode) {
   if (mode === "initial") return INITIAL_VIDEO_URL;
